@@ -4,8 +4,6 @@
 
 借助机场 + 家宽 IP 的链式代理，把域外 AI 服务（Claude、ChatGPT、Gemini 等）的出口 IP 切换为家庭宽带住宅 IP，降低风控风险。社交媒体与流媒体（YouTube、Netflix、X 等）同样支持锁定到指定区域。
 
-基于 [Mihomo](https://github.com/MetaCubeX/mihomo) 内核，运行于 [Clash Party](https://github.com/mihomo-party-org/clash-party)。
-
 > 开源仓库：[github.com/andrew-zyf/clash-override-chain-proxy](https://github.com/andrew-zyf/clash-override-chain-proxy)
 
 ## 工作原理
@@ -15,9 +13,11 @@
                   ↑ dialer-proxy           ↑ HTTP 代理
 ```
 
+基于 [Mihomo](https://github.com/MetaCubeX/mihomo) 内核，运行于 [Clash Party](https://github.com/mihomo-party-org/clash-party)。
+
 脚本在覆写阶段做四件事：
 
-1. **注入 MiyaIP 代理节点**——自选跳板（机场线路中转）和官方中转，两种模式可选
+1. **注入家宽IP代理节点**——自选跳板（机场线路中转）和官方中转，两种模式可选
 2. **覆写 DNS**——fake-ip 模式，域外 AI / 微软 / 流媒体走域外 DoH（Google、Cloudflare），Apple / 域内 AI 走域内 DoH（阿里、腾讯）
 3. **覆写域名嗅探（Sniffer）**——TLS（443/8443）、HTTP（80/8080/8880）、QUIC（443）三协议嗅探，还原 fake-ip 下的真实域名，让规则精确命中
 4. **注入路由规则（置顶）**——域外 AI、微软开发工具走链式代理；社交与流媒体锁区；域内 AI 直连
