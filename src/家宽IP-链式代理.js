@@ -1,18 +1,19 @@
 /**
- * Clash 家宽IP-链式代理 覆写脚本（整合 DNS + Sniffer）
+ * Clash 家宽IP-链式代理覆写脚本
  *
  * 功能：
- * 1) 注入 MiyaIP 链式代理节点（自选跳板 + 官方中转）
- * 2) 覆写 DNS 与域名嗅探策略
- * 3) 注入 AI / 开发者域名规则，置顶于订阅规则之前
- * 4) 流媒体区域锁定（YouTube / Netflix / X 等锁定到指定地区最快节点）
+ * 1. 注入 MiyaIP 链式代理节点。
+ * 2. 覆写 DNS 与域名嗅探配置。
+ * 3. 注入 AI、开发工具和流媒体规则。
+ * 4. 生成链式代理与媒体锁区所需代理组。
  *
- * 依赖：MiyaIP 凭证.js（必须在本脚本之前执行，注入 config._miya）
+ * 依赖：
+ * - 需先执行 `MiyaIP 凭证.js`，向 `config._miya` 注入凭证。
  *
- * 兼容性：本脚本运行在 Clash Party 的 JavaScriptCore 环境中，
- *         不支持箭头函数、解构赋值、模板字符串、展开语法、
- *         Object.values()、Object.fromEntries() 等 ES6+ 特性。
- *         全部使用 ES5 语法编写。
+ * 兼容性：
+ * - 运行环境为 Clash Party 的 JavaScriptCore。
+ * - 使用 ES5 语法，不依赖箭头函数、解构赋值、模板字符串、
+ *   展开语法、`Object.values()`、`Object.fromEntries()` 等 ES6+ 特性。
  *
  * @version 7.6
  */
@@ -21,12 +22,13 @@
 // 用户可调参数
 // ---------------------------------------------------------------------------
 
+// 控制链式代理地区、流媒体锁区和手动跳板节点。
 var USER_OPTIONS = {
-  // 链式代理中转地区：US / JP / HK / SG（主要用于域外 AI 服务）
+  // 链式代理中转地区，可选 US / JP / HK / SG，主要用于域外 AI 服务。
   chainRegion: "SG",
-  // 流媒体与域外社交锁区：US / JP / HK / SG
+  // 流媒体与域外社交锁区，可选 US / JP / HK / SG。
   mediaRegion: "US",
-  // 手动指定跳板节点名；留空则按 chainRegion 自动匹配
+  // 手动指定跳板节点名，留空则按 chainRegion 自动匹配。
   manualNode: ""
 };
 
@@ -34,7 +36,7 @@ var USER_OPTIONS = {
 // 节点与地区常量
 // ---------------------------------------------------------------------------
 
-// 按节点名识别地区（用于自动生成"地区线路"测速组）
+// 按节点名特征识别地区，并提供地区标签与旗帜。
 var REGION_MAP = {
   US: { regex: /🇺🇸|美国|^US[\|丨\- ]/i, label: "美国", flag: "🇺🇸" },
   JP: { regex: /🇯🇵|日本|^JP[\|丨\- ]/i, label: "日本", flag: "🇯🇵" },
@@ -42,53 +44,116 @@ var REGION_MAP = {
   SG: { regex: /🇸🇬|新加坡|^SG[\|丨\- ]/i, label: "新加坡", flag: "🇸🇬" }
 };
 
+// 脚本注入的两个 MiyaIP 节点名称。
 var NODE_NAMES = {
   relay: "自选节点 + 家宽IP",
   transit: "MiyaIP（官方中转）"
 };
 
-// 自动匹配地区组时，排除这些汇总组（避免把"节点选择"误判为地区线路组）
+// 自动匹配地区组时需要跳过的汇总代理组。
 var EXCLUDED_GROUPS = ["节点选择"];
+
+// 域名模式里使用的通配前缀。
+var DOMAIN_WILDCARD_PREFIX = "+.";
+
+// 直连规则统一使用的目标名称。
+var RULE_TARGET_DIRECT = "DIRECT";
+
+// `url-test` 代理组使用的探测地址。
+var URL_TEST_PROBE_URL = "http://www.gstatic.com/generate_204";
+
+// 识别 MiyaIP 自身节点时使用的名称关键字。
+var MIYA_PROXY_NAME_KEYWORD = "MiyaIP";
+
+// 脚本生成的各类代理组名称后缀。
+var GROUP_NAME_SUFFIXES = {
+  relay: "线路-链式代理-跳板",
+  media: "线路-流媒体",
+  chain: "-链式代理-家宽IP出口"
+};
 
 // ---------------------------------------------------------------------------
 // DNS 域名组常量
 // ---------------------------------------------------------------------------
 
+// 域外服务优先使用的 DoH 服务器列表。
 var DOH_OVERSEAS = [
   "https://dns.google/dns-query",
   "https://cloudflare-dns.com/dns-query"
 ];
+
+// 域内服务优先使用的 DoH 服务器列表。
 var DOH_DOMESTIC = [
   "https://dns.alidns.com/dns-query",
   "https://doh.pub/dns-query"
 ];
+
+// 主解析失败或命中过滤条件时使用的后备 DoH 列表。
 var DOH_FALLBACK = DOH_OVERSEAS.concat(["https://dns.quad9.net/dns-query"]);
 
-var DOMAINS_APPLE = [
-  "+.apple.com", "+.icloud.com", "+.icloud-content.com",
-  "+.mzstatic.com", "+.apple-cloudkit.com", "+.cdn-apple.com", "+.aaplimg.com"
-];
-// 微软域名走链式代理，确保 Claude in Excel / PowerPoint 等插件正常访问
-var DOMAINS_MICROSOFT = [
-  "+.microsoft.com", "+.microsoftonline.com", "+.live.com",
-  "+.office.com", "+.office.net", "+.office365.com",
-  "+.msftauth.net", "+.msauth.net", "+.msecnd.net",
-  "+.visualstudio.com", "+.vsassets.io", "+.vsmarketplacebadges.dev", "+.aka.ms"
-];
+// Apple 生态相关域名分类。
+var DOMAINS_APPLE = {
+  core: [
+    "+.apple.com", "+.icloud.com"
+  ],
+  content: [
+    "+.icloud-content.com", "+.mzstatic.com", "+.cdn-apple.com", "+.aaplimg.com"
+  ],
+  services: [
+    "+.apple-cloudkit.com"
+  ]
+};
 
-// Anthropic / Claude, OpenAI / ChatGPT, Google AI / Gemini / Antigravity, Perplexity, AI 基础设施
-var DOMAINS_AI_OVERSEAS = [
-  "+.claude.ai", "+.anthropic.com", "+.claudeusercontent.com",
-  "+.servd-anthropic-website.b-cdn.net",
-  "+.openai.com", "+.chatgpt.com", "+.oaiusercontent.com", "+.oaistatic.com",
-  "+.gemini.google.com", "+.aistudio.google.com", "+.ai.google.dev",
-  "+.generativelanguage.googleapis.com",
-  "+.antigravity.google", "+.antigravity-ide.com",
-  "+.perplexity.ai", "+.perplexitycdn.com",
-  "+.statsig.com",
-  "+.openrouter.ai", "+.siliconflow.com", "+.aicodemirror.com"
-];
+// 收窄后的 Microsoft 办公、鉴权和开发工具域名。
+var DOMAINS_MICROSOFT = {
+  office: [
+    "+.office.com", "+.office.net", "+.office365.com"
+  ],
+  auth: [
+    "+.microsoftonline.com",
+    "+.msftauth.net", "+.msauth.net", "+.msecnd.net"
+  ],
+  vscode: [
+    "+.visualstudio.com", "+.vsassets.io", "+.vsmarketplacebadges.dev"
+  ]
+};
 
+// 需要走域外策略的核心 AI 产品域名。
+var DOMAINS_AI_OVERSEAS = {
+  anthropic: [
+    "+.claude.ai", "+.claude.com", "+.anthropic.com",
+    "+.claudeusercontent.com", "+.claudemcpclient.com",
+    "+.servd-anthropic-website.b-cdn.net"
+  ],
+
+  openai: [
+    "+.openai.com", "+.chatgpt.com",
+    "+.oaiusercontent.com", "+.oaistatic.com"
+  ],
+
+  google_ai: [
+    "+.gemini.google.com", "+.aistudio.google.com",
+    "+.ai.google.dev", "+.generativelanguage.googleapis.com",
+    "+.ai.google", "+.makersuite.google.com",
+    "+.deepmind.google", "+.labs.google",
+    "+.antigravity.google", "+.antigravity-ide.com"
+  ],
+
+  perplexity: [
+    "+.perplexity.ai", "+.perplexitycdn.com"
+  ],
+
+  router_and_tools: [
+    "+.openrouter.ai", "+.siliconflow.com", "+.aicodemirror.com"
+  ],
+
+  xai: [
+    "+.x.ai", "+.console.x.ai", "+.api.x.ai"
+  ]
+};
+
+
+// 需要按地区锁区处理的流媒体和域外社交域名。
 var DOMAINS_MEDIA = {
   youtube: [
     "+.youtube.com", "+.googlevideo.com", "+.ytimg.com",
@@ -98,11 +163,6 @@ var DOMAINS_MEDIA = {
     "+.netflix.com", "+.netflix.net", "+.nflxvideo.net",
     "+.nflxso.net", "+.nflximg.net", "+.nflximg.com",
     "+.nflxext.com"
-  ],
-  google: [
-    "+.google.com", "+.googleapis.com", "+.gstatic.com",
-    "+.google.co.jp", "+.google.com.hk",
-    "+.googleusercontent.com", "+.ggpht.com"
   ],
   twitter: [
     "+.twitter.com", "+.x.com", "+.twimg.com",
@@ -122,37 +182,74 @@ var DOMAINS_MEDIA = {
   ]
 };
 
-// 所有流媒体/社交域名展平（供 DNS 和规则注入复用）
-var ALL_MEDIA_DOMAINS = [];
-Object.keys(DOMAINS_MEDIA).forEach(function(k) {
-  ALL_MEDIA_DOMAINS.push.apply(ALL_MEDIA_DOMAINS, DOMAINS_MEDIA[k]);
-});
+// 网络边界相对明确、适合稳定直连的域内 AI 域名。
+var DOMAINS_AI_DOMESTIC = {
+  tongyi: [
+    "+.tongyi.aliyun.com", "+.qianwen.aliyun.com", "+.dashscope.aliyuncs.com"
+  ],
+  moonshot: [
+    "+.moonshot.cn"
+  ],
+  zhipu: [
+    "+.chatglm.cn", "+.zhipuai.cn", "+.bigmodel.cn"
+  ],
+  siliconflow: [
+    "+.siliconflow.cn"
+  ]
+};
 
-// 通义千问、Kimi、智谱、MiniMax 等
-var DOMAINS_AI_DOMESTIC = [
-  "+.tongyi.aliyun.com", "+.qianwen.aliyun.com", "+.dashscope.aliyuncs.com",
-  "+.moonshot.cn", "+.kimi.ai",
-  "+.chatglm.cn", "+.zhipuai.cn", "+.bigmodel.cn",
-  "+.minimaxi.com", "+.siliconflow.cn",
-  "+.itssx.com", "+.claudecode.net.cn"
+// 把按类别分组的域名对象展平成单个数组。
+function flattenGroupedDomains(groupedDomains) {
+  var flattenedDomains = [];
+  Object.keys(groupedDomains).forEach(function(groupName) {
+    flattenedDomains.push.apply(flattenedDomains, groupedDomains[groupName]);
+  });
+  return flattenedDomains;
+}
+
+// 展平后的 Apple 域名列表，供 DNS 和规则注入复用。
+var ALL_APPLE_DOMAINS = flattenGroupedDomains(DOMAINS_APPLE);
+
+// 展平后的 Microsoft 域名列表，供 DNS 和规则注入复用。
+var ALL_MICROSOFT_DOMAINS = flattenGroupedDomains(DOMAINS_MICROSOFT);
+
+// 展平后的域外 AI 域名列表，供 DNS 和规则注入复用。
+var ALL_AI_OVERSEAS_DOMAINS = flattenGroupedDomains(DOMAINS_AI_OVERSEAS);
+
+// 展平后的媒体和社交域名列表，供 DNS 和规则注入复用。
+var ALL_MEDIA_DOMAINS = flattenGroupedDomains(DOMAINS_MEDIA);
+
+// 展平后的域内 AI 域名列表，供 DNS 和规则注入复用。
+var ALL_AI_DOMESTIC_DOMAINS = flattenGroupedDomains(DOMAINS_AI_DOMESTIC);
+
+// 需要统一生成链式代理规则的主域名分组。
+var CHAIN_PROXY_SUFFIX_GROUPS = [
+  ALL_AI_OVERSEAS_DOMAINS,
+  ALL_MICROSOFT_DOMAINS
+];
+
+// 额外补充到链式代理规则里的独立域名后缀。
+var CHAIN_PROXY_EXTRA_SUFFIXES = [
+  "cdn.cloudflare.net",
+  "github.com",
+  "ping0.cc",
+  "ipinfo.io"
 ];
 
 // ---------------------------------------------------------------------------
 // 主入口
 // ---------------------------------------------------------------------------
 
-/** 将 DNS 通配符前缀 "+." 转为规则所需的裸域名后缀 */
-function toSuffix(d) { return d.replace("+.", ""); }
+// 把带通配前缀的域名模式转换成规则使用的裸域名后缀。
+function toSuffix(domainPattern) { return domainPattern.replace(DOMAIN_WILDCARD_PREFIX, ""); }
 
-/**
- * 按顺序执行：凭证读取 → DNS/Sniffer 注入 → 代理链路注入 → 规则注入。
- */
+// 按固定顺序执行凭证读取、DNS/Sniffer 注入、代理链路注入和规则注入。
 function main(config) {
-  var miya = takeMiyaCredentials(config);
+  var miyaCredentials = takeMiyaCredentials(config);
 
   applyDnsAndSniffer(config);
   ensureProxyContainers(config);
-  injectMiyaProxies(config, miya);
+  injectMiyaProxies(config, miyaCredentials);
 
   var relayTarget = resolveRelayTarget(config, USER_OPTIONS.chainRegion, USER_OPTIONS.manualNode);
   bindDialerProxy(config, relayTarget);
@@ -168,76 +265,110 @@ function main(config) {
 // 凭证读取
 // ---------------------------------------------------------------------------
 
+// 读取并移除注入到 `config._miya` 的 MiyaIP 凭证。
 function takeMiyaCredentials(config) {
   if (!config._miya) {
     throw new Error("[家宽IP-链式代理] 缺少 config._miya，请确保 MiyaIP 凭证.js 已启用且排序在本脚本之前");
   }
-  var miya = config._miya;
+  var miyaCredentials = config._miya;
   delete config._miya; // 防止凭证输出到最终配置
-  return miya;
+  return miyaCredentials;
 }
 
 // ---------------------------------------------------------------------------
 // DNS + Sniffer
 // ---------------------------------------------------------------------------
 
+// 把脚本生成的 DNS 和域名嗅探配置写入主配置。
 function applyDnsAndSniffer(config) {
   config.dns = buildDnsConfig();
   config.sniffer = buildSnifferConfig();
 }
 
+// 把一组域名统一绑定到同一套 DoH 服务器。
+function assignNameserverPolicyDomains(policy, domains, dohServers) {
+  for (var i = 0; i < domains.length; i++) {
+    policy[domains[i]] = dohServers;
+  }
+}
+
+// 构建不同域名分类对应的 `nameserver-policy` 映射。
 function buildNameserverPolicy() {
   var policy = {
     "geosite:openai": DOH_OVERSEAS,
     "+.cloud.google.com": DOH_OVERSEAS
   };
 
-  // 微软域名 → 域外 DoH，Apple 域名 → 域内 DoH
-  policy[DOMAINS_MICROSOFT.join(",")] = DOH_OVERSEAS;
-  policy[DOMAINS_APPLE.join(",")] = DOH_DOMESTIC;
+  // 微软走域外 DoH，Apple 走域内 DoH。
+  assignNameserverPolicyDomains(policy, ALL_MICROSOFT_DOMAINS, DOH_OVERSEAS);
+  assignNameserverPolicyDomains(policy, ALL_APPLE_DOMAINS, DOH_DOMESTIC);
 
-  // 域外 AI 域名 → 域外 DoH
-  for (var i = 0; i < DOMAINS_AI_OVERSEAS.length; i++) {
-    policy[DOMAINS_AI_OVERSEAS[i]] = DOH_OVERSEAS;
-  }
-  // 域内 AI 域名 → 域内 DoH
-  for (var i = 0; i < DOMAINS_AI_DOMESTIC.length; i++) {
-    policy[DOMAINS_AI_DOMESTIC[i]] = DOH_DOMESTIC;
-  }
-  // 流媒体与域外社交域名 → 域外 DoH
-  for (var i = 0; i < ALL_MEDIA_DOMAINS.length; i++) {
-    policy[ALL_MEDIA_DOMAINS[i]] = DOH_OVERSEAS;
-  }
+  // 域外 AI 走域外 DoH。
+  assignNameserverPolicyDomains(policy, ALL_AI_OVERSEAS_DOMAINS, DOH_OVERSEAS);
+  // 域内 AI 走域内 DoH。
+  assignNameserverPolicyDomains(policy, ALL_AI_DOMESTIC_DOMAINS, DOH_DOMESTIC);
+  // 流媒体与域外社交走域外 DoH。
+  assignNameserverPolicyDomains(policy, ALL_MEDIA_DOMAINS, DOH_OVERSEAS);
 
   return policy;
 }
 
-function buildDnsConfig() {
-  var fakeIpFilter = [
-    // 本地网络
-    "*.lan", "*.local", "*.localhost", "localhost.ptlogin2.qq.com",
-    // 系统时间同步
+// 构建需要绕过 `fake-ip` 的域名白名单。
+function buildDnsFakeIpFilter() {
+  var localNetworkDomains = [
+    "*.lan", "*.local", "*.localhost", "localhost.ptlogin2.qq.com"
+  ];
+  var timeSyncDomains = [
     "time.*.com", "time.*.gov", "time.*.edu.cn", "time.*.apple.com",
     "time-ios.apple.com", "time-macos.apple.com", "ntp.*.com",
-    "ntp1.aliyun.com", "pool.ntp.org", "*.pool.ntp.org",
-    // 网络连通性检测
+    "ntp1.aliyun.com", "pool.ntp.org", "*.pool.ntp.org"
+  ];
+  var connectivityTestDomains = [
     "www.msftconnecttest.com", "www.msftncsi.com",
     "*.msftconnecttest.com", "*.msftncsi.com"
-  ].concat(DOMAINS_APPLE).concat([
-    // 游戏/实时通信
+  ];
+  // Apple 生态对真实 IP 更敏感，统一排除 `fake-ip`。
+  var appleDomains = ALL_APPLE_DOMAINS.slice();
+  var realtimeDomains = [
     "+.srv.nintendo.net", "+.stun.playstation.net",
     "xbox.*.microsoft.com", "+.xboxlive.com",
     "*.battlenet.com.cn", "*.blzstatic.cn",
-    "stun.*.*", "stun.*.*.*", "+.stun.*.*", "+.stun.*.*.*",
-    // 家庭网络设备
+    "stun.*.*", "stun.*.*.*", "+.stun.*.*", "+.stun.*.*.*"
+  ];
+  var homeNetworkDomains = [
     "*.mcdn.bilivideo.cn", "+.music.163.com", "+.126.net",
     "+.router.asus.com", "+.linksys.com", "+.tplinkwifi.net", "*.xiaoqiang.net"
-  ]);
+  ];
 
-  var fallbackFilterDomain = ALL_MEDIA_DOMAINS.concat([
+  return localNetworkDomains
+    .concat(timeSyncDomains)
+    .concat(connectivityTestDomains)
+    .concat(appleDomains)
+    .concat(realtimeDomains)
+    .concat(homeNetworkDomains);
+}
+
+// 构建 `fallback-filter` 使用的域名匹配列表。
+function buildDnsFallbackFilterDomains() {
+  var fallbackDomains = ALL_MEDIA_DOMAINS.concat([
     "+.github.com"
-  ]).concat(DOMAINS_MICROSOFT);
+  ]);
+  return fallbackDomains.concat(ALL_MICROSOFT_DOMAINS);
+}
 
+// 构建 Clash DNS 的 `fallback-filter` 配置对象。
+function buildDnsFallbackFilter() {
+  return {
+    geoip: true,
+    "geoip-code": "CN",
+    geosite: ["gfw"],
+    ipcidr: ["240.0.0.0/4", "0.0.0.0/32"],
+    domain: buildDnsFallbackFilterDomains()
+  };
+}
+
+// 构建不含动态列表项的基础 DNS 配置。
+function buildDnsBaseConfig() {
   return {
     enable: true,
     listen: "0.0.0.0:1053",
@@ -245,24 +376,25 @@ function buildDnsConfig() {
     "respect-rules": false,
     "enhanced-mode": "fake-ip",
     "fake-ip-range": "198.18.0.1/16",
-    "fake-ip-filter": fakeIpFilter,
     "default-nameserver": ["223.5.5.5", "119.29.29.29"],
     nameserver: DOH_DOMESTIC,
     "proxy-server-nameserver": DOH_DOMESTIC,
     "direct-nameserver": DOH_DOMESTIC.slice(),
     "direct-nameserver-follow-policy": true,
-    fallback: DOH_FALLBACK,
-    "fallback-filter": {
-      geoip: true,
-      "geoip-code": "CN",
-      geosite: ["gfw"],
-      ipcidr: ["240.0.0.0/4", "0.0.0.0/32"],
-      domain: fallbackFilterDomain
-    },
-    "nameserver-policy": buildNameserverPolicy()
+    fallback: DOH_FALLBACK
   };
 }
 
+// 组装完整的 DNS 配置。
+function buildDnsConfig() {
+  var dnsConfig = buildDnsBaseConfig();
+  dnsConfig["fake-ip-filter"] = buildDnsFakeIpFilter();
+  dnsConfig["fallback-filter"] = buildDnsFallbackFilter();
+  dnsConfig["nameserver-policy"] = buildNameserverPolicy();
+  return dnsConfig;
+}
+
+// 构建域名嗅探配置。
 function buildSnifferConfig() {
   return {
     enable: true,
@@ -274,15 +406,11 @@ function buildSnifferConfig() {
       QUIC: { ports: [443] }
     },
     "force-domain": [
-      "+.cloudflare.com",
-      "+.cdn.cloudflare.net"
+      "+.cloudflare.com", "+.cdn.cloudflare.net"
     ],
     "skip-domain": [
-      "+.push.apple.com",
-      "+.apple.com",
-      "+.lan",
-      "+.local",
-      "+.localhost"
+      "+.push.apple.com", "+.apple.com", "+.lan",
+      "+.local", "+.localhost"
     ]
   };
 }
@@ -291,144 +419,167 @@ function buildSnifferConfig() {
 // MiyaIP 代理链路
 // ---------------------------------------------------------------------------
 
+// 确保主配置里存在代理、代理组和规则三个容器。
 function ensureProxyContainers(config) {
   if (!config.proxies) config.proxies = [];
   if (!config["proxy-groups"]) config["proxy-groups"] = [];
   if (!config.rules) config.rules = [];
 }
 
-function injectMiyaProxies(config, miya) {
-  function makeProxy(name, endpoint) {
-    return {
-      name: name,
-      type: "http",
-      server: endpoint.server,
-      port: endpoint.port,
-      username: miya.username,
-      password: miya.password,
-      udp: true
-    };
-  }
-
-  var miyaProxies = [
-    makeProxy(NODE_NAMES.relay, miya.relay),
-    makeProxy(NODE_NAMES.transit, miya.transit)
-  ];
-
-  for (var i = 0; i < miyaProxies.length; i++) {
-    var p = miyaProxies[i];
-    var exists = false;
-    for (var j = 0; j < config.proxies.length; j++) {
-      if (config.proxies[j].name === p.name) {
-        exists = true;
-        break;
-      }
-    }
-    if (!exists) config.proxies.push(p);
-  }
+// 把地区输入统一转成大写字符串键。
+function normalizeRegionKey(region) {
+  return String(region || "").toUpperCase();
 }
 
-/**
- * 查找或创建指定地区的 url-test 代理组。
- * reuseExisting 为 true 时优先复用订阅已有的地区组（用于链式代理跳板选择）。
- */
-function ensureRegionGroup(config, regionKey, nameSuffix, reuseExisting) {
-  var regionInfo = REGION_MAP[String(regionKey || "").toUpperCase()];
-  if (!regionInfo) return null;
+// 根据地区键解析地区元数据，并按需提供兜底标签。
+function resolveRegionMeta(region, allowFallbackRegionLabel) {
+  var regionKey = normalizeRegionKey(region);
+  if (REGION_MAP[regionKey]) return REGION_MAP[regionKey];
+  if (!allowFallbackRegionLabel) return null;
+  return { label: region, flag: "🌐" };
+}
 
-  var regex = regionInfo.regex;
-  var label = regionInfo.label;
-  var flag = regionInfo.flag;
-  var groupName = flag + "|" + label + nameSuffix;
+// 按旗帜、地区标签和后缀拼出代理组名称。
+function buildRegionGroupName(regionMeta, groupNameSuffix) {
+  return regionMeta.flag + "|" + regionMeta.label + groupNameSuffix;
+}
 
-  // 优先复用订阅里已有的地区代理组
-  if (reuseExisting) {
-    var groups = config["proxy-groups"];
-    for (var i = 0; i < groups.length; i++) {
-      var g = groups[i];
-      if (regex.test(g.name) && EXCLUDED_GROUPS.indexOf(g.name) < 0) {
-        return g.name;
-      }
-    }
-  }
+// 根据凭证和端点信息生成一个 MiyaIP HTTP 代理节点。
+function buildMiyaProxy(miyaCredentials, proxyName, endpoint) {
+  return {
+    name: proxyName,
+    type: "http",
+    server: endpoint.server,
+    port: endpoint.port,
+    username: miyaCredentials.username,
+    password: miyaCredentials.password,
+    udp: true
+  };
+}
 
-  // 检查是否已存在同名组
-  var groups = config["proxy-groups"];
-  for (var i = 0; i < groups.length; i++) {
-    if (groups[i].name === groupName) return groupName;
-  }
-
-  // 筛选地区节点（排除 MiyaIP 自身节点）
-  var regionNodes = [];
-  var proxies = config.proxies;
+// 按名称查找单个代理节点。
+function findProxyByName(proxies, proxyName) {
   for (var i = 0; i < proxies.length; i++) {
-    var p = proxies[i];
-    if (regex.test(p.name) && p.name.indexOf("MiyaIP") < 0) {
-      regionNodes.push(p.name);
+    if (proxies[i].name === proxyName) return proxies[i];
+  }
+  return null;
+}
+
+// 按名称查找单个代理组。
+function findProxyGroupByName(proxyGroups, groupName) {
+  for (var i = 0; i < proxyGroups.length; i++) {
+    if (proxyGroups[i].name === groupName) return proxyGroups[i];
+  }
+  return null;
+}
+
+// 查找可直接复用的订阅地区组名称。
+function findReusableRegionGroupName(proxyGroups, regionRegex) {
+  for (var i = 0; i < proxyGroups.length; i++) {
+    var proxyGroup = proxyGroups[i];
+    if (regionRegex.test(proxyGroup.name) && EXCLUDED_GROUPS.indexOf(proxyGroup.name) < 0) {
+      return proxyGroup.name;
     }
   }
-  if (regionNodes.length === 0) return null;
+  return null;
+}
 
-  config["proxy-groups"].push({
+// 收集匹配地区特征且非 MiyaIP 的节点名称列表。
+function collectRegionNodeNames(proxies, regionRegex) {
+  var regionNodeNames = [];
+  for (var i = 0; i < proxies.length; i++) {
+    var proxy = proxies[i];
+    if (regionRegex.test(proxy.name) && proxy.name.indexOf(MIYA_PROXY_NAME_KEYWORD) < 0) {
+      regionNodeNames.push(proxy.name);
+    }
+  }
+  return regionNodeNames;
+}
+
+// 把地区节点列表包装成一个 `url-test` 代理组。
+function addRegionUrlTestGroup(proxyGroups, groupName, regionNodeNames) {
+  proxyGroups.push({
     name: groupName,
     type: "url-test",
-    proxies: regionNodes,
-    url: "http://www.gstatic.com/generate_204",
+    proxies: regionNodeNames,
+    url: URL_TEST_PROBE_URL,
     interval: 300,
     tolerance: 50
   });
+}
+
+// 向主配置注入家宽出口和官方中转两个 MiyaIP 节点。
+function injectMiyaProxies(config, miyaCredentials) {
+  var miyaProxies = [
+    buildMiyaProxy(miyaCredentials, NODE_NAMES.relay, miyaCredentials.relay),
+    buildMiyaProxy(miyaCredentials, NODE_NAMES.transit, miyaCredentials.transit)
+  ];
+
+  for (var i = 0; i < miyaProxies.length; i++) {
+    var miyaProxy = miyaProxies[i];
+    if (!findProxyByName(config.proxies, miyaProxy.name)) {
+      config.proxies.push(miyaProxy);
+    }
+  }
+}
+
+// 查找、复用或创建指定地区的 `url-test` 代理组。
+function ensureRegionGroup(config, region, groupNameSuffix, reuseExisting) {
+  var regionMeta = resolveRegionMeta(region, false);
+  if (!regionMeta) return null;
+
+  var regionRegex = regionMeta.regex;
+  var groupName = buildRegionGroupName(regionMeta, groupNameSuffix);
+  var proxyGroups = config["proxy-groups"];
+
+  // 优先复用订阅里已有的地区代理组。
+  if (reuseExisting) {
+    var reusableGroupName = findReusableRegionGroupName(proxyGroups, regionRegex);
+    if (reusableGroupName) return reusableGroupName;
+  }
+
+  // 检查是否已存在同名组。
+  if (findProxyGroupByName(proxyGroups, groupName)) return groupName;
+
+  // 筛选地区节点，并排除 MiyaIP 自身节点。
+  var regionNodeNames = collectRegionNodeNames(config.proxies, regionRegex);
+  if (regionNodeNames.length === 0) return null;
+
+  addRegionUrlTestGroup(proxyGroups, groupName, regionNodeNames);
 
   return groupName;
 }
 
+// 解析家宽链式代理前一跳应使用的跳板节点或地区组。
 function resolveRelayTarget(config, region, manualNode) {
   if (manualNode) return manualNode;
-  return ensureRegionGroup(config, region, "线路-链式代理-跳板", false);
+  return ensureRegionGroup(config, region, GROUP_NAME_SUFFIXES.relay, true);
 }
 
+// 解析流媒体锁区应使用的地区组。
 function resolveMediaTarget(config, mediaRegion) {
-  return ensureRegionGroup(config, mediaRegion, "线路-流媒体", false);
+  return ensureRegionGroup(config, mediaRegion, GROUP_NAME_SUFFIXES.media, true);
 }
 
+// 给家宽出口节点绑定拨号前置代理，并清理官方中转节点的拨号代理。
 function bindDialerProxy(config, relayTarget) {
-  var relayNode = null;
-  for (var i = 0; i < config.proxies.length; i++) {
-    if (config.proxies[i].name === NODE_NAMES.relay) {
-      relayNode = config.proxies[i];
-      break;
-    }
-  }
-  if (relayNode) {
-    if (relayTarget) relayNode["dialer-proxy"] = relayTarget;
-    else delete relayNode["dialer-proxy"];
+  var relayProxy = findProxyByName(config.proxies, NODE_NAMES.relay);
+  if (relayProxy) {
+    if (relayTarget) relayProxy["dialer-proxy"] = relayTarget;
+    else delete relayProxy["dialer-proxy"];
   }
 
-  // 官方中转节点不挂 dialer-proxy
-  var transitNode = null;
-  for (var i = 0; i < config.proxies.length; i++) {
-    if (config.proxies[i].name === NODE_NAMES.transit) {
-      transitNode = config.proxies[i];
-      break;
-    }
-  }
-  if (transitNode) delete transitNode["dialer-proxy"];
+  // 官方中转节点不挂 `dialer-proxy`。
+  var transitProxy = findProxyByName(config.proxies, NODE_NAMES.transit);
+  if (transitProxy) delete transitProxy["dialer-proxy"];
 }
 
+// 确保存在一个承载 MiyaIP 官方中转与家宽出口的链式代理组。
 function ensureChainGroup(config, region) {
-  var regionKey = String(region || "").toUpperCase();
-  var regionMeta = REGION_MAP[regionKey] || { label: region, flag: "🌐" };
-  var chainGroupName = regionMeta.flag + "|" + regionMeta.label + "-链式代理-家宽IP出口";
+  var regionMeta = resolveRegionMeta(region, true);
+  var chainGroupName = buildRegionGroupName(regionMeta, GROUP_NAME_SUFFIXES.chain);
 
-  var groups = config["proxy-groups"];
-  var exists = false;
-  for (var i = 0; i < groups.length; i++) {
-    if (groups[i].name === chainGroupName) {
-      exists = true;
-      break;
-    }
-  }
-
-  if (!exists) {
+  if (!findProxyGroupByName(config["proxy-groups"], chainGroupName)) {
     config["proxy-groups"].push({
       name: chainGroupName,
       type: "select",
@@ -443,88 +594,104 @@ function ensureChainGroup(config, region) {
 // 规则注入（去重 + 置顶）
 // ---------------------------------------------------------------------------
 
-/** 提取规则的 "TYPE,domain" 前缀，用于去重匹配 */
-function getRuleKey(rule) {
-  var i = rule.indexOf(",");
-  if (i < 0) return null;
-  var j = rule.indexOf(",", i + 1);
-  if (j < 0) return null;
-  return rule.substring(0, j);
+// 提取规则的 `"TYPE,value"` 标识。
+function getRuleIdentity(ruleLine) {
+  var firstCommaIndex = ruleLine.indexOf(",");
+  if (firstCommaIndex < 0) return null;
+
+  var secondCommaIndex = ruleLine.indexOf(",", firstCommaIndex + 1);
+  if (secondCommaIndex < 0) return null;
+
+  return ruleLine.substring(0, secondCommaIndex);
 }
 
-/**
- * 注入管理规则，优先级顺序：
- * 1) 域内 AI 直连（DIRECT）
- * 2) 流媒体锁区
- * 3) 域外 AI / 微软开发工具 / 出口质量测试 → 链式代理组
- */
-function injectManagedRules(config, chainGroupName, mediaGroupName) {
-  var directAiRules = buildDirectAiRules();
-  var mediaRules = buildMediaRules(mediaGroupName);
-  var chainProxyRules = buildChainProxyRules(chainGroupName);
+// 按固定优先级拼出直连、媒体和链式代理三类管理规则。
+function buildManagedRules(chainGroupName, mediaGroupName) {
+  return buildDirectAiRules()
+    .concat(buildMediaRules(mediaGroupName))
+    .concat(buildChainProxyRules(chainGroupName));
+}
 
-  var managedRules = directAiRules.concat(mediaRules).concat(chainProxyRules);
-
-  // 收集管理规则的 key，用于从订阅规则中去重
-  var managedPatterns = {};
-  for (var i = 0; i < managedRules.length; i++) {
-    var key = getRuleKey(managedRules[i]);
-    if (key) managedPatterns[key] = true;
+// 把规则数组转换成便于查询的规则标识表。
+function buildRuleIdentityLookup(ruleLines) {
+  var ruleIdentityLookup = {};
+  for (var i = 0; i < ruleLines.length; i++) {
+    var ruleIdentity = getRuleIdentity(ruleLines[i]);
+    if (ruleIdentity) ruleIdentityLookup[ruleIdentity] = true;
   }
+  return ruleIdentityLookup;
+}
 
-  // 过滤掉订阅中与管理规则冲突的条目
+// 过滤掉与管理规则命中同一标识的原始订阅规则。
+function filterConflictingRules(ruleLines, blockedRuleIdentities) {
   var filteredRules = [];
-  for (var i = 0; i < config.rules.length; i++) {
-    var key = getRuleKey(config.rules[i]);
-    if (key === null || !managedPatterns[key]) {
-      filteredRules.push(config.rules[i]);
+  for (var i = 0; i < ruleLines.length; i++) {
+    var ruleIdentity = getRuleIdentity(ruleLines[i]);
+    if (ruleIdentity === null || !blockedRuleIdentities[ruleIdentity]) {
+      filteredRules.push(ruleLines[i]);
     }
   }
-  config.rules = filteredRules;
+  return filteredRules;
+}
 
-  // 管理规则置顶
-  for (var i = managedRules.length - 1; i >= 0; i--) {
-    config.rules.unshift(managedRules[i]);
+// 保持原顺序把一批规则插入到规则数组头部。
+function prependRules(targetRules, rulesToPrepend) {
+  for (var i = rulesToPrepend.length - 1; i >= 0; i--) {
+    targetRules.unshift(rulesToPrepend[i]);
   }
 }
 
+// 注入管理规则并整体置顶。
+function injectManagedRules(config, chainGroupName, mediaGroupName) {
+  var managedRules = buildManagedRules(chainGroupName, mediaGroupName);
+  var managedRuleIdentities = buildRuleIdentityLookup(managedRules);
+
+  config.rules = filterConflictingRules(config.rules, managedRuleIdentities);
+  prependRules(config.rules, managedRules);
+}
+
+// 按规则标识去重后追加单条管理规则。
+function addRuleIfNotExists(ruleLines, seenRuleIdentities, type, value, target) {
+  var ruleIdentity = type + "," + value;
+  if (seenRuleIdentities[ruleIdentity]) return;
+  seenRuleIdentities[ruleIdentity] = true;
+  ruleLines.push(type + "," + value + "," + target);
+}
+
+// 批量生成 `DOMAIN-SUFFIX` 规则并完成批内去重。
+function addSuffixRulesIfNotExists(ruleLines, seenRuleIdentities, domains, target) {
+  for (var i = 0; i < domains.length; i++) {
+    addRuleIfNotExists(ruleLines, seenRuleIdentities, "DOMAIN-SUFFIX", toSuffix(domains[i]), target);
+  }
+}
+
+// 生成域外 AI、微软和测试域名的链式代理规则。
 function buildChainProxyRules(chainGroupName) {
-  var rules = [];
-  // 域外 AI 域名
-  for (var i = 0; i < DOMAINS_AI_OVERSEAS.length; i++) {
-    rules.push("DOMAIN-SUFFIX," + toSuffix(DOMAINS_AI_OVERSEAS[i]) + "," + chainGroupName);
+  var ruleLines = [];
+  var seenRuleIdentities = {};
+  var i;
+
+  // 域外 AI 域名加微软与开发工具。
+  for (i = 0; i < CHAIN_PROXY_SUFFIX_GROUPS.length; i++) {
+    addSuffixRulesIfNotExists(ruleLines, seenRuleIdentities, CHAIN_PROXY_SUFFIX_GROUPS[i], chainGroupName);
   }
-  rules.push("DOMAIN-SUFFIX,cdn.cloudflare.net," + chainGroupName);
-  // 微软与开发工具
-  for (var i = 0; i < DOMAINS_MICROSOFT.length; i++) {
-    rules.push("DOMAIN-SUFFIX," + toSuffix(DOMAINS_MICROSOFT[i]) + "," + chainGroupName);
-  }
-  // 关键词兜底（捕获未被 DOMAIN-SUFFIX 覆盖的子域名或新域名）
-  // 不兜底 gemini/claude：这两个词过于常见，容易误匹配无关域名；
-  // 而 anthropic/openai/chatgpt/perplexity 足够独特，误匹配风险极低。
-  rules.push("DOMAIN-KEYWORD,anthropic," + chainGroupName);
-  rules.push("DOMAIN-KEYWORD,openai," + chainGroupName);
-  rules.push("DOMAIN-KEYWORD,chatgpt," + chainGroupName);
-  rules.push("DOMAIN-KEYWORD,perplexity," + chainGroupName);
-  // 出口质量测试
-  rules.push("DOMAIN-SUFFIX,ping0.cc," + chainGroupName);
-  rules.push("DOMAIN-SUFFIX,ipinfo.io," + chainGroupName);
-  return rules;
+  addSuffixRulesIfNotExists(ruleLines, seenRuleIdentities, CHAIN_PROXY_EXTRA_SUFFIXES, chainGroupName);
+  return ruleLines;
 }
 
+// 生成域内 AI 域名的直连规则。
 function buildDirectAiRules() {
-  var rules = [];
-  for (var i = 0; i < DOMAINS_AI_DOMESTIC.length; i++) {
-    rules.push("DOMAIN-SUFFIX," + toSuffix(DOMAINS_AI_DOMESTIC[i]) + ",DIRECT");
-  }
-  return rules;
+  var ruleLines = [];
+  var seenRuleIdentities = {};
+  addSuffixRulesIfNotExists(ruleLines, seenRuleIdentities, ALL_AI_DOMESTIC_DOMAINS, RULE_TARGET_DIRECT);
+  return ruleLines;
 }
 
+// 生成流媒体和域外社交域名的锁区规则。
 function buildMediaRules(mediaGroupName) {
   if (!mediaGroupName) return [];
-  var rules = [];
-  for (var i = 0; i < ALL_MEDIA_DOMAINS.length; i++) {
-    rules.push("DOMAIN-SUFFIX," + toSuffix(ALL_MEDIA_DOMAINS[i]) + "," + mediaGroupName);
-  }
-  return rules;
+  var ruleLines = [];
+  var seenRuleIdentities = {};
+  addSuffixRulesIfNotExists(ruleLines, seenRuleIdentities, ALL_MEDIA_DOMAINS, mediaGroupName);
+  return ruleLines;
 }
