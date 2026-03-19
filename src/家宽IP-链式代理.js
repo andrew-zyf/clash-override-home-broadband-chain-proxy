@@ -4,8 +4,8 @@
  * 功能：
  * 1. 注入 MiyaIP 链式代理节点。
  * 2. 覆写 DNS 与域名嗅探配置。
- * 3. 注入 AI、开发工具和流媒体规则。
- * 4. 生成链式代理与媒体锁区所需代理组。
+ * 3. 注入美国 AI、开发工具和流媒体规则。
+ * 4. 生成链式代理、美国 AI 专用链路与媒体锁区所需代理组。
  *
  * 依赖：
  * - 需先执行 `MiyaIP 凭证.js`，向 `config._miya` 注入凭证。
@@ -15,16 +15,16 @@
  * - 使用 ES5 语法，不依赖箭头函数、解构赋值、模板字符串、
  *   展开语法、`Object.values()`、`Object.fromEntries()` 等 ES6+ 特性。
  *
- * @version 7.6
+ * @version 7.8
  */
 
 // ---------------------------------------------------------------------------
 // 用户可调参数
 // ---------------------------------------------------------------------------
 
-// 控制链式代理地区、流媒体锁区和手动跳板节点。
+// 控制通用链式代理地区、流媒体锁区和手动跳板节点。
 var USER_OPTIONS = {
-  // 链式代理中转地区，可选 US / JP / HK / SG，主要用于域外 AI 服务。
+  // 通用链式代理中转地区，可选 US / JP / HK / SG，主要用于微软 / GitHub。
   chainRegion: "SG",
   // 流媒体与域外社交锁区，可选 US / JP / HK / SG。
   mediaRegion: "US",
@@ -44,9 +44,10 @@ var REGION_MAP = {
   SG: { regex: /🇸🇬|新加坡|^SG[\|丨\- ]/i, label: "新加坡", flag: "🇸🇬" },
 };
 
-// 脚本注入的两个 MiyaIP 节点名称。
+// 脚本注入的三个 MiyaIP 节点名称。
 var NODE_NAMES = {
   relay: "自选节点 + 家宽IP",
+  relayUsAi: "美国AI专用 + 家宽IP",
   transit: "MiyaIP（官方中转）",
 };
 
@@ -70,6 +71,7 @@ var GROUP_NAME_SUFFIXES = {
   relay: "线路-链式代理-跳板",
   media: "线路-流媒体",
   chain: "-链式代理-家宽IP出口",
+  usAiChain: "AI-链式代理-家宽IP出口",
 };
 
 // ---------------------------------------------------------------------------
@@ -115,8 +117,8 @@ var DOMAINS_MICROSOFT = {
   vscode: ["+.visualstudio.com", "+.vsassets.io", "+.vsmarketplacebadges.dev"],
 };
 
-// 需要走域外策略的核心 AI 产品域名。
-var DOMAINS_AI_OVERSEAS = {
+// 需要强制走美国链式代理的美国 AI 产品域名。
+var DOMAINS_AI_US = {
   anthropic: [
     "+.claude.ai",
     "+.claude.com",
@@ -151,12 +153,27 @@ var DOMAINS_AI_OVERSEAS = {
 
   router_and_tools: [
     "+.openrouter.ai",
-    "+.siliconflow.com",
     "+.aicodemirror.com",
   ],
 
   xai: ["+.x.ai", "+.console.x.ai", "+.api.x.ai"],
 };
+
+// 需要强制走美国链式代理的 macOS AI 专用 App / 进程名。
+var US_AI_PROCESS_NAMES_MACOS = [
+  "Claude",
+  "Claude Helper",
+  "ChatGPT",
+  "ChatGPT Helper",
+  "Perplexity",
+  "Perplexity Helper",
+  "Cursor",
+  "Cursor Helper",
+  "Windsurf",
+  "Windsurf Helper",
+  "Codeium",
+  "Codeium Helper",
+];
 
 // 需要按地区锁区处理的流媒体和域外社交域名。
 var DOMAINS_MEDIA = {
@@ -212,6 +229,25 @@ var DOMAINS_DIRECT_EXTRA = {
   tailscale: ["+.tailscale.com", "+.tailscale.io"],
 };
 
+// 需要强制直连的 Tailnet 地址段，避免 Tailscale 数据面进入家宽链式代理。
+var DIRECT_IP_CIDR_RULES = [
+  { type: "IP-CIDR", value: "100.64.0.0/10", target: RULE_TARGET_DIRECT },
+  { type: "IP-CIDR", value: "100.100.100.100/32", target: RULE_TARGET_DIRECT },
+  { type: "IP-CIDR6", value: "fd7a:115c:a1e0::/48", target: RULE_TARGET_DIRECT },
+];
+
+// macOS 上常见的 Tailscale 相关进程名，置顶直连以减少被 TUN 接管的概率。
+var DIRECT_PROCESS_RULES = [
+  { type: "PROCESS-NAME", value: "Tailscale", target: RULE_TARGET_DIRECT },
+  { type: "PROCESS-NAME", value: "tailscaled", target: RULE_TARGET_DIRECT },
+  { type: "PROCESS-NAME", value: "IPNExtension", target: RULE_TARGET_DIRECT },
+  {
+    type: "PROCESS-NAME",
+    value: "io.tailscale.ipn.macos.network-extension",
+    target: RULE_TARGET_DIRECT,
+  },
+];
+
 // 把按类别分组的域名对象展平成单个数组。
 function flattenGroupedDomains(groupedDomains) {
   var flattenedDomains = [];
@@ -227,8 +263,8 @@ var ALL_APPLE_DOMAINS = flattenGroupedDomains(DOMAINS_APPLE);
 // 展平后的 Microsoft 域名列表，供 DNS 和规则注入复用。
 var ALL_MICROSOFT_DOMAINS = flattenGroupedDomains(DOMAINS_MICROSOFT);
 
-// 展平后的域外 AI 域名列表，供 DNS 和规则注入复用。
-var ALL_AI_OVERSEAS_DOMAINS = flattenGroupedDomains(DOMAINS_AI_OVERSEAS);
+// 展平后的美国 AI 域名列表，供 DNS 和规则注入复用。
+var ALL_AI_US_DOMAINS = flattenGroupedDomains(DOMAINS_AI_US);
 
 // 展平后的媒体和社交域名列表，供 DNS 和规则注入复用。
 var ALL_MEDIA_DOMAINS = flattenGroupedDomains(DOMAINS_MEDIA);
@@ -239,19 +275,15 @@ var ALL_AI_DOMESTIC_DOMAINS = flattenGroupedDomains(DOMAINS_AI_DOMESTIC);
 // 展平后的额外直连域名列表，供规则注入复用。
 var ALL_DIRECT_EXTRA_DOMAINS = flattenGroupedDomains(DOMAINS_DIRECT_EXTRA);
 
-// 需要统一生成链式代理规则的主域名分组。
-var CHAIN_PROXY_SUFFIX_GROUPS = [
-  ALL_AI_OVERSEAS_DOMAINS,
-  ALL_MICROSOFT_DOMAINS,
-];
-
-// 额外补充到链式代理规则里的独立域名后缀。
-var CHAIN_PROXY_EXTRA_SUFFIXES = [
+// 需要强制走美国 AI 专用链式代理的额外测试与静态资源域名。
+var US_AI_CHAIN_EXTRA_SUFFIXES = [
   "cdn.cloudflare.net",
-  "github.com",
   "ping0.cc",
   "ipinfo.io",
 ];
+
+// 额外补充到通用链式代理规则里的独立域名后缀。
+var GENERAL_CHAIN_EXTRA_SUFFIXES = ["github.com"];
 
 // ---------------------------------------------------------------------------
 // 主入口
@@ -275,11 +307,13 @@ function main(config) {
     USER_OPTIONS.chainRegion,
     USER_OPTIONS.manualNode,
   );
-  bindDialerProxy(config, relayTarget);
+  var usAiRelayTarget = resolveUsAiRelayTarget(config);
+  bindDialerProxies(config, relayTarget, usAiRelayTarget);
 
   var chainGroupName = ensureChainGroup(config, USER_OPTIONS.chainRegion);
+  var usAiChainGroupName = ensureUsAiChainGroup(config);
   var mediaGroupName = resolveMediaTarget(config, USER_OPTIONS.mediaRegion);
-  injectManagedRules(config, chainGroupName, mediaGroupName);
+  injectManagedRules(config, chainGroupName, usAiChainGroupName, mediaGroupName);
 
   return config;
 }
@@ -328,8 +362,8 @@ function buildNameserverPolicy() {
   assignNameserverPolicyDomains(policy, ALL_MICROSOFT_DOMAINS, DOH_OVERSEAS);
   assignNameserverPolicyDomains(policy, ALL_APPLE_DOMAINS, DOH_DOMESTIC);
 
-  // 域外 AI 走域外 DoH。
-  assignNameserverPolicyDomains(policy, ALL_AI_OVERSEAS_DOMAINS, DOH_OVERSEAS);
+  // 美国 AI 走域外 DoH。
+  assignNameserverPolicyDomains(policy, ALL_AI_US_DOMAINS, DOH_OVERSEAS);
   // 域内 AI 走域内 DoH。
   assignNameserverPolicyDomains(policy, ALL_AI_DOMESTIC_DOMAINS, DOH_DOMESTIC);
   // 流媒体与域外社交走域外 DoH。
@@ -454,6 +488,8 @@ function buildSnifferConfig() {
     },
     "force-domain": ["+.cloudflare.com", "+.cdn.cloudflare.net"],
     "skip-domain": [
+      "+.tailscale.com",
+      "+.tailscale.io",
       "+.push.apple.com",
       "+.apple.com",
       "+.lan",
@@ -562,10 +598,15 @@ function addRegionUrlTestGroup(proxyGroups, groupName, regionNodeNames) {
   });
 }
 
-// 向主配置注入家宽出口和官方中转两个 MiyaIP 节点。
+// 向主配置注入通用家宽出口、美国 AI 专用出口和官方中转三个 MiyaIP 节点。
 function injectMiyaProxies(config, miyaCredentials) {
   var miyaProxies = [
     buildMiyaProxy(miyaCredentials, NODE_NAMES.relay, miyaCredentials.relay),
+    buildMiyaProxy(
+      miyaCredentials,
+      NODE_NAMES.relayUsAi,
+      miyaCredentials.relay,
+    ),
     buildMiyaProxy(
       miyaCredentials,
       NODE_NAMES.transit,
@@ -617,6 +658,11 @@ function resolveRelayTarget(config, region, manualNode) {
   return ensureRegionGroup(config, region, GROUP_NAME_SUFFIXES.relay, true);
 }
 
+// 美国 AI 专用家宽出口固定挂美国跳板，不跟随用户的 chainRegion。
+function resolveUsAiRelayTarget(config) {
+  return ensureRegionGroup(config, "US", GROUP_NAME_SUFFIXES.relay, true);
+}
+
 // 解析流媒体锁区应使用的地区组。
 function resolveMediaTarget(config, mediaRegion) {
   return ensureRegionGroup(
@@ -627,12 +673,18 @@ function resolveMediaTarget(config, mediaRegion) {
   );
 }
 
-// 给家宽出口节点绑定拨号前置代理，并清理官方中转节点的拨号代理。
-function bindDialerProxy(config, relayTarget) {
+// 给通用链路和美国 AI 专用链路绑定拨号前置代理，并清理官方中转节点。
+function bindDialerProxies(config, relayTarget, usAiRelayTarget) {
   var relayProxy = findProxyByName(config.proxies, NODE_NAMES.relay);
   if (relayProxy) {
     if (relayTarget) relayProxy["dialer-proxy"] = relayTarget;
     else delete relayProxy["dialer-proxy"];
+  }
+
+  var usAiRelayProxy = findProxyByName(config.proxies, NODE_NAMES.relayUsAi);
+  if (usAiRelayProxy) {
+    if (usAiRelayTarget) usAiRelayProxy["dialer-proxy"] = usAiRelayTarget;
+    else delete usAiRelayProxy["dialer-proxy"];
   }
 
   // 官方中转节点不挂 `dialer-proxy`。
@@ -659,6 +711,25 @@ function ensureChainGroup(config, region) {
   return chainGroupName;
 }
 
+// 确保美国 AI 专用家宽链式代理组固定使用美国跳板链路。
+function ensureUsAiChainGroup(config) {
+  var usMeta = resolveRegionMeta("US", true);
+  var usAiChainGroupName = buildRegionGroupName(
+    usMeta,
+    GROUP_NAME_SUFFIXES.usAiChain,
+  );
+
+  if (!findProxyGroupByName(config["proxy-groups"], usAiChainGroupName)) {
+    config["proxy-groups"].push({
+      name: usAiChainGroupName,
+      type: "select",
+      proxies: [NODE_NAMES.relayUsAi],
+    });
+  }
+
+  return usAiChainGroupName;
+}
+
 // ---------------------------------------------------------------------------
 // 规则注入（去重 + 置顶）
 // ---------------------------------------------------------------------------
@@ -674,11 +745,13 @@ function getRuleIdentity(ruleLine) {
   return ruleLine.substring(0, secondCommaIndex);
 }
 
-// 按固定优先级拼出直连、媒体和链式代理三类管理规则。
-function buildManagedRules(chainGroupName, mediaGroupName) {
+// 按固定优先级拼出直连、美国 AI、媒体和通用链式代理四类管理规则。
+function buildManagedRules(chainGroupName, usAiChainGroupName, mediaGroupName) {
   return buildDirectAiRules()
+    .concat(buildUsAiProcessRules(usAiChainGroupName))
+    .concat(buildUsAiDomainRules(usAiChainGroupName))
     .concat(buildMediaRules(mediaGroupName))
-    .concat(buildChainProxyRules(chainGroupName));
+    .concat(buildGeneralChainProxyRules(chainGroupName));
 }
 
 // 把规则数组转换成便于查询的规则标识表。
@@ -711,8 +784,17 @@ function prependRules(targetRules, rulesToPrepend) {
 }
 
 // 注入管理规则并整体置顶。
-function injectManagedRules(config, chainGroupName, mediaGroupName) {
-  var managedRules = buildManagedRules(chainGroupName, mediaGroupName);
+function injectManagedRules(
+  config,
+  chainGroupName,
+  usAiChainGroupName,
+  mediaGroupName,
+) {
+  var managedRules = buildManagedRules(
+    chainGroupName,
+    usAiChainGroupName,
+    mediaGroupName,
+  );
   var managedRuleIdentities = buildRuleIdentityLookup(managedRules);
 
   config.rules = filterConflictingRules(config.rules, managedRuleIdentities);
@@ -733,6 +815,20 @@ function addRuleIfNotExists(
   ruleLines.push(type + "," + value + "," + target);
 }
 
+// 追加一批原生规则项，可附带额外参数，例如 `no-resolve`。
+function addRawRulesIfNotExists(ruleLines, seenRuleIdentities, rawRules) {
+  for (var i = 0; i < rawRules.length; i++) {
+    var rawRule = rawRules[i];
+    var ruleIdentity = rawRule.type + "," + rawRule.value;
+    if (seenRuleIdentities[ruleIdentity]) continue;
+    seenRuleIdentities[ruleIdentity] = true;
+
+    var ruleLine = rawRule.type + "," + rawRule.value + "," + rawRule.target;
+    if (rawRule.option) ruleLine += "," + rawRule.option;
+    ruleLines.push(ruleLine);
+  }
+}
+
 // 批量生成 `DOMAIN-SUFFIX` 规则并完成批内去重。
 function addSuffixRulesIfNotExists(
   ruleLines,
@@ -751,25 +847,70 @@ function addSuffixRulesIfNotExists(
   }
 }
 
-// 生成域外 AI、微软和测试域名的链式代理规则。
-function buildChainProxyRules(chainGroupName) {
-  var ruleLines = [];
-  var seenRuleIdentities = {};
-  var i;
-
-  // 域外 AI 域名加微软与开发工具。
-  for (i = 0; i < CHAIN_PROXY_SUFFIX_GROUPS.length; i++) {
-    addSuffixRulesIfNotExists(
+// 批量生成 `PROCESS-NAME` 规则并完成批内去重。
+function addProcessRulesIfNotExists(
+  ruleLines,
+  seenRuleIdentities,
+  processNames,
+  target,
+) {
+  for (var i = 0; i < processNames.length; i++) {
+    addRuleIfNotExists(
       ruleLines,
       seenRuleIdentities,
-      CHAIN_PROXY_SUFFIX_GROUPS[i],
-      chainGroupName,
+      "PROCESS-NAME",
+      processNames[i],
+      target,
     );
   }
+}
+
+// 生成美国 AI 网站的美国链式代理规则。
+function buildUsAiDomainRules(usAiChainGroupName) {
+  var ruleLines = [];
+  var seenRuleIdentities = {};
   addSuffixRulesIfNotExists(
     ruleLines,
     seenRuleIdentities,
-    CHAIN_PROXY_EXTRA_SUFFIXES,
+    ALL_AI_US_DOMAINS,
+    usAiChainGroupName,
+  );
+  addSuffixRulesIfNotExists(
+    ruleLines,
+    seenRuleIdentities,
+    US_AI_CHAIN_EXTRA_SUFFIXES,
+    usAiChainGroupName,
+  );
+  return ruleLines;
+}
+
+// 生成 macOS AI 专用 App / 进程的美国链式代理规则。
+function buildUsAiProcessRules(usAiChainGroupName) {
+  var ruleLines = [];
+  var seenRuleIdentities = {};
+  addProcessRulesIfNotExists(
+    ruleLines,
+    seenRuleIdentities,
+    US_AI_PROCESS_NAMES_MACOS,
+    usAiChainGroupName,
+  );
+  return ruleLines;
+}
+
+// 生成微软和开发工具的通用链式代理规则。
+function buildGeneralChainProxyRules(chainGroupName) {
+  var ruleLines = [];
+  var seenRuleIdentities = {};
+  addSuffixRulesIfNotExists(
+    ruleLines,
+    seenRuleIdentities,
+    ALL_MICROSOFT_DOMAINS,
+    chainGroupName,
+  );
+  addSuffixRulesIfNotExists(
+    ruleLines,
+    seenRuleIdentities,
+    GENERAL_CHAIN_EXTRA_SUFFIXES,
     chainGroupName,
   );
   return ruleLines;
@@ -779,6 +920,23 @@ function buildChainProxyRules(chainGroupName) {
 function buildDirectAiRules() {
   var ruleLines = [];
   var seenRuleIdentities = {};
+  var directNetworkRules = [];
+  var i;
+
+  for (i = 0; i < DIRECT_IP_CIDR_RULES.length; i++) {
+    directNetworkRules.push({
+      type: DIRECT_IP_CIDR_RULES[i].type,
+      value: DIRECT_IP_CIDR_RULES[i].value,
+      target: DIRECT_IP_CIDR_RULES[i].target,
+      option: "no-resolve",
+    });
+  }
+
+  addRawRulesIfNotExists(
+    ruleLines,
+    seenRuleIdentities,
+    DIRECT_PROCESS_RULES.concat(directNetworkRules),
+  );
   addSuffixRulesIfNotExists(
     ruleLines,
     seenRuleIdentities,
