@@ -28,9 +28,9 @@
 
 ## 文件说明
 
-- **`src/家宽IP-链式代理.js`**——主脚本，全部逻辑都在这里
-- **`src/MiyaIP 凭证_样本.js`**——凭证模板，复制后填入你自己的信息
-- **`tests/validate.js`**——最小化本地校验脚本，用来检查规则、DNS、Sniffer 和错误处理是否仍符合预期
+- **[`src/家宽IP-链式代理.js`](src/%E5%AE%B6%E5%AE%BDIP-%E9%93%BE%E5%BC%8F%E4%BB%A3%E7%90%86.js)**——主脚本，全部逻辑都在这里
+- **[`src/MiyaIP 凭证_样本.js`](src/MiyaIP%20%E5%87%AD%E8%AF%81_%E6%A0%B7%E6%9C%AC.js)**——凭证模板，复制后填入你自己的信息
+- **[`tests/validate.js`](tests/validate.js)**——最小化本地校验脚本，用来检查规则、DNS、Sniffer 和错误处理是否仍符合预期
 
 ---
 
@@ -41,7 +41,7 @@
 1. **Clash Party**——[GitHub 下载](https://github.com/mihomo-party-org/clash-party)
 2. **机场订阅**——推荐 [办公娱乐好帮手](https://xn--9kq10e0y7h.site/index.html?register=twb6RIec)
 3. **静态家宽 IP**——推荐 [MiyaIP](https://www.miyaip.com/?invitecode=7670643)，购买静态住宅代理，拿到用户名、密码、服务器地址
-4. **本仓库文件**——`src/MiyaIP 凭证_样本.js` + `src/家宽IP-链式代理.js`
+4. **本仓库文件**——[`src/MiyaIP 凭证_样本.js`](src/MiyaIP%20%E5%87%AD%E8%AF%81_%E6%A0%B7%E6%9C%AC.js) + [`src/家宽IP-链式代理.js`](src/%E5%AE%B6%E5%AE%BDIP-%E9%93%BE%E5%BC%8F%E4%BB%A3%E7%90%86.js)
 
 ### 1. 导入机场订阅
 
@@ -51,7 +51,7 @@
 
 ### 2. 创建凭证文件
 
-把 `MiyaIP 凭证_样本.js` 复制一份，重命名为 **`MiyaIP 凭证.js`**，打开填入真实信息：
+把 [`src/MiyaIP 凭证_样本.js`](src/MiyaIP%20%E5%87%AD%E8%AF%81_%E6%A0%B7%E6%9C%AC.js) 复制一份，重命名为 **`MiyaIP 凭证.js`**，打开填入真实信息：
 
 ```javascript
 function main(config) {
@@ -78,7 +78,7 @@ function main(config) {
 进入 Clash Party →「覆写」，把两个 `.js` 文件加进去，**拖拽成这个顺序**：
 
 ① **`MiyaIP 凭证.js`**——把凭证注入 `config._miya`
-② **`家宽IP-链式代理.js`**——读取凭证，注入代理节点、DNS、规则等全部配置
+② **[`家宽IP-链式代理.js`](src/%E5%AE%B6%E5%AE%BDIP-%E9%93%BE%E5%BC%8F%E4%BB%A3%E7%90%86.js)**——读取凭证，注入代理节点、DNS、规则等全部配置
 
 顺序反了会报错——主脚本启动时需要读取 `config._miya`，凭证没注入自然读不到。
 
@@ -86,7 +86,7 @@ function main(config) {
 
 ### 4. 调整参数
 
-打开 `家宽IP-链式代理.js`，顶部现在有三个参数可以改：
+打开 [`src/家宽IP-链式代理.js`](src/%E5%AE%B6%E5%AE%BDIP-%E9%93%BE%E5%BC%8F%E4%BB%A3%E7%90%86.js)，顶部现在有三个参数可以改：
 
 ```javascript
 var USER_OPTIONS = {
@@ -153,6 +153,8 @@ var USER_OPTIONS = {
 node tests/validate.js
 ```
 
+脚本位置：[tests/validate.js](tests/validate.js)
+
 它会检查：
 
 - 管理规则不重复
@@ -165,23 +167,12 @@ node tests/validate.js
 
 ## 常见问题
 
-**报错「缺少 config._miya」**
-覆写顺序反了——`MiyaIP 凭证.js` 必须排在 `家宽IP-链式代理.js` 前面
-
-**出口 IP 不是住宅 IP**
-MiyaIP 凭证填错了，或者账户余额不足
-
-**流媒体为什么不再单独锁区？**
-当前脚本已把 `mediaRegion` 合并到链式代理逻辑里。YouTube / Netflix / X 等媒体域名现在统一走 `chainRegion` 对应的家宽IP出口，不再单独维护独立媒体地区组。
-
-**想手动指定跳板节点**
-把 `manualNode` 设为节点全名，要和 Clash Party 里显示的一字不差
-
-**链式代理对象现在怎么分类？**
-当前按用途分类为五类：`AI 服务`、`浏览器`、`基础平台`、`社交与流媒体`、`直连保留项`。分类只影响可读性和维护方式，不改变它们当前是否走链式代理的实际行为。
-
-**担心 Tailscale 远程浏览把家宽出口污染了**
-当前脚本已额外把 Tailscale 控制面域名、Tailnet 常见地址段，以及 macOS 上常见的 Tailscale 进程名置顶直连。只要远程浏览器本身运行在远端主机、并由远端主机直接出网，通常不会把网页流量混进 MiyaIP 家宽出口。
+- **报错「缺少 config._miya」**：覆写顺序反了——`MiyaIP 凭证.js` 必须排在 [`src/家宽IP-链式代理.js`](src/%E5%AE%B6%E5%AE%BDIP-%E9%93%BE%E5%BC%8F%E4%BB%A3%E7%90%86.js) 前面
+- **出口 IP 不是住宅 IP**：MiyaIP 凭证填错了，或者账户余额不足
+- **流媒体为什么不再单独锁区？**：当前脚本已把 `mediaRegion` 合并到链式代理逻辑里。YouTube / Netflix / X 等媒体域名现在统一走 `chainRegion` 对应的家宽IP出口，不再单独维护独立媒体地区组。
+- **想手动指定跳板节点**：把 `manualNode` 设为节点全名，要和 Clash Party 里显示的一字不差
+- **链式代理对象现在怎么分类？**：当前按用途分类为五类：`AI 服务`、`浏览器`、`基础平台`、`社交与流媒体`、`直连保留项`。分类只影响可读性和维护方式，不改变它们当前是否走链式代理的实际行为。
+- **担心 Tailscale 远程浏览把家宽出口污染了**：当前脚本已额外把 Tailscale 控制面域名、Tailnet 常见地址段，以及 macOS 上常见的 Tailscale 进程名置顶直连。只要远程浏览器本身运行在远端主机、并由远端主机直接出网，通常不会把网页流量混进 MiyaIP 家宽出口。
 
 ---
 
