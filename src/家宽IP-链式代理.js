@@ -30,6 +30,8 @@ var USER_OPTIONS = {
   manualNode: "",
   // 是否将浏览器主进程和 helper 进程一并纳入链式代理。
   enableBrowserProcessProxy: true,
+  // 是否将常见 AI CLI 可执行文件纳入链式代理。
+  enableAiCliProcessProxy: false,
 };
 
 // ---------------------------------------------------------------------------
@@ -194,6 +196,9 @@ var PROCESS_NAMES_CHAIN_AI_MACOS = [
   "Codeium",
   "Codeium Helper",
 ];
+
+// 可选纳入链式代理的 AI CLI 可执行文件名，默认关闭。
+var PROCESS_NAMES_CHAIN_AI_CLI = ["claude", "opencode", "gemini", "codex"];
 
 // 官方资料可直接确认的 macOS 浏览器主进程名。
 var PROCESS_NAMES_CHAIN_BROWSER_MACOS_CONFIRMED = [
@@ -547,10 +552,8 @@ function buildDnsFakeIpFilter() {
     "+.stun.*.*",
     "+.stun.*.*.*",
   ];
-  var homeNetworkDomains = [
-    "*.mcdn.bilivideo.cn",
-    "+.music.163.com",
-    "+.126.net",
+  // 本地路由器和家庭网络设备入口应直接返回真实 IP。
+  var homeRouterDomains = [
     "+.router.asus.com",
     "+.linksys.com",
     "+.tplinkwifi.net",
@@ -562,7 +565,7 @@ function buildDnsFakeIpFilter() {
     .concat(connectivityTestDomains)
     .concat(appleDomains)
     .concat(realtimeDomains)
-    .concat(homeNetworkDomains)
+    .concat(homeRouterDomains)
     .concat(ALL_DIRECT_EXTRA_DOMAINS);
 }
 
@@ -965,6 +968,9 @@ function addProcessRulesIfNotExists(
 // 按当前用户选项返回应纳入链式代理的进程分组。
 function buildChainProxyProcessGroups() {
   var processGroups = [PROCESS_NAMES_CHAIN_AI_MACOS];
+  if (USER_OPTIONS.enableAiCliProcessProxy) {
+    processGroups.push(PROCESS_NAMES_CHAIN_AI_CLI);
+  }
   if (USER_OPTIONS.enableBrowserProcessProxy) {
     processGroups.push(PROCESS_NAMES_CHAIN_BROWSER_MACOS);
   }

@@ -106,6 +106,27 @@ function testDisableBrowserProcessProxy() {
   assert(output.rules.includes("PROCESS-NAME,Claude,🇸🇬|新加坡-链式代理-家宽IP出口"));
 }
 
+function testAiCliProcessProxyDefaultsOff() {
+  const sandbox = loadSandbox();
+  const output = sandbox.main(createBaseConfig());
+
+  assert(!output.rules.includes("PROCESS-NAME,claude,🇸🇬|新加坡-链式代理-家宽IP出口"));
+  assert(!output.rules.includes("PROCESS-NAME,opencode,🇸🇬|新加坡-链式代理-家宽IP出口"));
+  assert(!output.rules.includes("PROCESS-NAME,gemini,🇸🇬|新加坡-链式代理-家宽IP出口"));
+  assert(!output.rules.includes("PROCESS-NAME,codex,🇸🇬|新加坡-链式代理-家宽IP出口"));
+}
+
+function testEnableAiCliProcessProxy() {
+  const sandbox = loadSandbox();
+  sandbox.USER_OPTIONS.enableAiCliProcessProxy = true;
+  const output = sandbox.main(createBaseConfig());
+
+  assert(output.rules.includes("PROCESS-NAME,claude,🇸🇬|新加坡-链式代理-家宽IP出口"));
+  assert(output.rules.includes("PROCESS-NAME,opencode,🇸🇬|新加坡-链式代理-家宽IP出口"));
+  assert(output.rules.includes("PROCESS-NAME,gemini,🇸🇬|新加坡-链式代理-家宽IP出口"));
+  assert(output.rules.includes("PROCESS-NAME,codex,🇸🇬|新加坡-链式代理-家宽IP出口"));
+}
+
 function testMissingRegionFails() {
   const sandbox = loadSandbox();
   sandbox.USER_OPTIONS.chainRegion = "US";
@@ -131,6 +152,8 @@ function testInvalidManualNodeFails() {
 
 testDefaultConfig();
 testDisableBrowserProcessProxy();
+testAiCliProcessProxyDefaultsOff();
+testEnableAiCliProcessProxy();
 testMissingRegionFails();
 testInvalidManualNodeFails();
 

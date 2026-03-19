@@ -86,19 +86,21 @@ function main(config) {
 
 ### 4. 调整参数
 
-打开 [`src/家宽IP-链式代理.js`](src/%E5%AE%B6%E5%AE%BDIP-%E9%93%BE%E5%BC%8F%E4%BB%A3%E7%90%86.js)，顶部现在有三个参数可以改：
+打开 [`src/家宽IP-链式代理.js`](src/%E5%AE%B6%E5%AE%BDIP-%E9%93%BE%E5%BC%8F%E4%BB%A3%E7%90%86.js)，顶部现在有四个参数可以改：
 
 ```javascript
 var USER_OPTIONS = {
   chainRegion: "SG", // 链式代理地区（自选节点 + 家宽IP 出口）
   manualNode: "", // 手动指定跳板节点名（留空 = 自动选最快的）
   enableBrowserProcessProxy: true, // 是否把浏览器进程整体送入链式代理
+  enableAiCliProcessProxy: false, // 是否把 AI CLI 可执行文件送入链式代理
 };
 ```
 
 - **`chainRegion`**（可选值：`US` `JP` `HK` `SG`）——链式代理流量从哪个地区出去；AI 服务、浏览器、基础平台、社交与流媒体都统一跟随这个参数
 - **`manualNode`**（节点名 / 留空）——指定跳板节点；留空则自动选该地区延迟最低的线路
 - **`enableBrowserProcessProxy`**（`true` / `false`）——默认 `true`，会把 `Arc`、`Comet`、`Dia`、`Atlas`、`Chrome`、`Edge` 整个进程带入链式代理；如果你希望这些浏览器里的普通网站继续按域名规则分流，把它改成 `false`
+- **`enableAiCliProcessProxy`**（`true` / `false`）——默认 `false`，只在你明确需要时启用；会把 `claude`、`opencode`、`gemini`、`codex` 这些 AI CLI 可执行文件纳入链式代理，不会碰 `Terminal`、`iTerm2`、`zsh`、`bash`
 
 > 如果 `chainRegion` 找不到可用的地区节点 / 代理组，或者 `manualNode` 名称写错，脚本现在会直接报错，不再静默退化成未绑定跳板的家宽出口。
 
@@ -127,6 +129,7 @@ var USER_OPTIONS = {
 ## 分流一览
 
 - **AI 服务** → 链式代理（跟随 `chainRegion` 的家宽IP出口）：Claude、ChatGPT、Sora、Gemini、NotebookLM、Antigravity、Perplexity、OpenRouter、Grok / xAI，以及 Claude / ChatGPT / Perplexity / Cursor / Windsurf / Codeium 等 macOS AI App
+- **AI CLI** → 可选链式代理（默认关闭）：`claude`、`opencode`、`gemini`、`codex`
 - **浏览器** → 链式代理（跟随 `chainRegion` 的家宽IP出口）：Arc、Comet、Dia、Atlas、Google Chrome、Microsoft Edge；其中 helper 进程名按 Chromium 命名模式推断
 - **基础平台** → 链式代理（跟随 `chainRegion`）：`google.com`、`googleapis.com`、`gstatic.com`、`microsoft.com`、`live.com`、`office.com`、`m365.cloud.microsoft`、`sharepoint.com`、GitHub，以及 Google Drive、Teams、Outlook、Word、Excel、PowerPoint、OneDrive、VS Code
 - **社交与流媒体** → 链式代理（跟随 `chainRegion`）：YouTube、Netflix、X / Twitter、Facebook / Instagram、Telegram、Discord
@@ -161,6 +164,7 @@ node tests/validate.js
 - `DIRECT` 保护规则优先置顶
 - `chainRegion` 缺少可用跳板时会显式报错
 - 关闭浏览器进程代理开关后，不再注入浏览器 `PROCESS-NAME` 规则
+- 关闭 AI CLI 进程代理开关后，不注入 `claude` / `opencode` / `gemini` / `codex`
 - DNS `nameserver-policy`、`fallback-filter` 和 Sniffer 是否覆盖关键域名
 
 ---
