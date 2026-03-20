@@ -198,9 +198,7 @@ var PROCESS_NAMES_CHAIN_AI_MACOS = [
   "Cursor",
   "Cursor Helper",
   "Windsurf",
-  "Windsurf Helper",
-  "Codeium",
-  "Codeium Helper",
+  "Windsurf Helper"
 ];
 
 // 可选纳入链式代理的 AI CLI 可执行文件名，默认关闭。
@@ -318,11 +316,6 @@ var DOMAINS_AI_DOMESTIC = {
 // Tailscale 控制面域名与 MagicDNS Tailnet 域名，固定保持 DIRECT。
 var TAILSCALE_DIRECT_DOMAINS = ["+.tailscale.com", "+.tailscale.io", "+.ts.net"];
 
-// 需要直连的其他域名（VPN、内网工具等）。
-var DOMAINS_DIRECT_EXTRA = {
-  tailscale: TAILSCALE_DIRECT_DOMAINS.slice(),
-};
-
 // Tailnet 地址段必须保持 DIRECT，避免 Tailscale 数据面进入家宽链式代理。
 var TAILSCALE_DIRECT_CIDR_RULES = [
   { type: "IP-CIDR", value: "100.64.0.0/10", target: RULE_TARGET_DIRECT },
@@ -401,11 +394,17 @@ var ALL_CHAIN_DOMAINS = mergeStringGroups([
 // 展平后的域内 AI 域名列表，供 DNS 和规则注入复用。
 var ALL_AI_DOMESTIC_DOMAINS = flattenGroupedDomains(DOMAINS_AI_DOMESTIC);
 
-// 展平后的额外直连域名列表，供规则注入复用。
-var ALL_DIRECT_EXTRA_DOMAINS = flattenGroupedDomains(DOMAINS_DIRECT_EXTRA);
-
 // Tailscale 控制面与 MagicDNS 域名，固定使用域外 DoH 解析。
 var ALL_TAILSCALE_DIRECT_DOMAINS = uniqueStrings(TAILSCALE_DIRECT_DOMAINS.slice());
+
+// 展平后的额外直连域名列表，供规则注入复用。
+var ALL_DIRECT_EXTRA_DOMAINS = ALL_TAILSCALE_DIRECT_DOMAINS.slice();
+
+// 需要直连的域名分组，按用途分类收拢输入。
+var DIRECT_DOMAIN_GROUPS = [
+  ALL_AI_DOMESTIC_DOMAINS,
+  ALL_DIRECT_EXTRA_DOMAINS,
+];
 
 // 链式代理出口测试与通用静态资源域名。
 var CHAIN_PROXY_SUPPORT_SUFFIXES = uniqueStrings([
@@ -556,8 +555,6 @@ function buildDnsFakeIpFilter() {
     "*.msftconnecttest.com",
     "*.msftncsi.com",
   ];
-  // Apple 生态对真实 IP 更敏感，统一排除 `fake-ip`。
-  var appleDomains = ALL_APPLE_DOMAINS.slice();
   // 游戏主机联机和游戏平台入口通常依赖真实 IP。
   var gamingRealtimeDomains = [
     "+.srv.nintendo.net",
@@ -583,7 +580,7 @@ function buildDnsFakeIpFilter() {
   return localNetworkDomains
     .concat(timeSyncDomains)
     .concat(connectivityTestDomains)
-    .concat(appleDomains)
+    .concat(ALL_APPLE_DOMAINS)
     .concat(gamingRealtimeDomains)
     .concat(stunRealtimeDomains)
     .concat(homeRouterDomains)
@@ -691,20 +688,22 @@ function buildMiyaProxy(miyaCredentials, proxyName, endpoint) {
   };
 }
 
-// 按名称查找单个代理节点。
-function findProxyByName(proxies, proxyName) {
-  for (var i = 0; i < proxies.length; i++) {
-    if (proxies[i].name === proxyName) return proxies[i];
+// 在按 `name` 命名的数组项中查找单个条目。
+function findNamedItem(items, targetName) {
+  for (var i = 0; i < items.length; i++) {
+    if (items[i].name === targetName) return items[i];
   }
   return null;
 }
 
+// 按名称查找单个代理节点。
+function findProxyByName(proxies, proxyName) {
+  return findNamedItem(proxies, proxyName);
+}
+
 // 按名称查找单个代理组。
 function findProxyGroupByName(proxyGroups, groupName) {
-  for (var i = 0; i < proxyGroups.length; i++) {
-    if (proxyGroups[i].name === groupName) return proxyGroups[i];
-  }
-  return null;
+  return findNamedItem(proxyGroups, groupName);
 }
 
 // 判断给定名称是否在节点或代理组中存在。
@@ -877,7 +876,7 @@ function getRuleIdentity(ruleLine) {
 
 // 按固定优先级拼出直连保留项和链式代理两类管理规则。
 function buildManagedRules(chainGroupName) {
-  return buildDirectAiRules()
+  return buildDirectRules()
     .concat(buildChainProxyRules(chainGroupName));
 }
 
@@ -951,21 +950,42 @@ function addRawRulesIfNotExists(ruleLines, seenRuleIdentities, rawRules) {
 }
 
 // 批量生成 `DOMAIN-SUFFIX` 规则并完成批内去重。
+function addTypedRulesIfNotExists(
+  ruleLines,
+  seenRuleIdentities,
+  values,
+  ruleType,
+  target,
+) {
+  for (var i = 0; i < values.length; i++) {
+    addRuleIfNotExists(
+      ruleLines,
+      seenRuleIdentities,
+      ruleType,
+      values[i],
+      target,
+    );
+  }
+}
+
+// 批量生成 `DOMAIN-SUFFIX` 规则并完成批内去重。
 function addSuffixRulesIfNotExists(
   ruleLines,
   seenRuleIdentities,
   domains,
   target,
 ) {
+  var suffixes = [];
   for (var i = 0; i < domains.length; i++) {
-    addRuleIfNotExists(
-      ruleLines,
-      seenRuleIdentities,
-      "DOMAIN-SUFFIX",
-      toSuffix(domains[i]),
-      target,
-    );
+    suffixes.push(toSuffix(domains[i]));
   }
+  addTypedRulesIfNotExists(
+    ruleLines,
+    seenRuleIdentities,
+    suffixes,
+    "DOMAIN-SUFFIX",
+    target,
+  );
 }
 
 // 批量生成 `PROCESS-NAME` 规则并完成批内去重。
@@ -975,15 +995,13 @@ function addProcessRulesIfNotExists(
   processNames,
   target,
 ) {
-  for (var i = 0; i < processNames.length; i++) {
-    addRuleIfNotExists(
-      ruleLines,
-      seenRuleIdentities,
-      "PROCESS-NAME",
-      processNames[i],
-      target,
-    );
-  }
+  addTypedRulesIfNotExists(
+    ruleLines,
+    seenRuleIdentities,
+    processNames,
+    "PROCESS-NAME",
+    target,
+  );
 }
 
 // 按当前用户选项返回应纳入链式代理的进程分组。
@@ -1033,11 +1051,12 @@ function buildChainProxyRules(chainGroupName) {
   return ruleLines;
 }
 
-// 生成域内 AI 域名及额外直连域名的直连规则。
-function buildDirectAiRules() {
+// 生成域内 AI、Tailscale 与其他本地保留项的 DIRECT 规则。
+function buildDirectRules() {
   var ruleLines = [];
   var seenRuleIdentities = {};
   var directNetworkRules = [];
+  var directDomainGroups = DIRECT_DOMAIN_GROUPS;
   var i;
 
   for (i = 0; i < TAILSCALE_DIRECT_CIDR_RULES.length; i++) {
@@ -1054,17 +1073,13 @@ function buildDirectAiRules() {
     seenRuleIdentities,
     TAILSCALE_DIRECT_PROCESS_RULES.concat(directNetworkRules),
   );
-  addSuffixRulesIfNotExists(
-    ruleLines,
-    seenRuleIdentities,
-    ALL_AI_DOMESTIC_DOMAINS,
-    RULE_TARGET_DIRECT,
-  );
-  addSuffixRulesIfNotExists(
-    ruleLines,
-    seenRuleIdentities,
-    ALL_DIRECT_EXTRA_DOMAINS,
-    RULE_TARGET_DIRECT,
-  );
+  for (i = 0; i < directDomainGroups.length; i++) {
+    addSuffixRulesIfNotExists(
+      ruleLines,
+      seenRuleIdentities,
+      directDomainGroups[i],
+      RULE_TARGET_DIRECT,
+    );
+  }
   return ruleLines;
 }

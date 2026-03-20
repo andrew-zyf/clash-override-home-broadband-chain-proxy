@@ -6,6 +6,7 @@ const vm = require("vm");
 const repoRoot = path.resolve(__dirname, "..");
 const scriptPath = path.join(repoRoot, "src", "家宽IP-链式代理.js");
 const scriptCode = fs.readFileSync(scriptPath, "utf8");
+const CHAIN_GROUP_NAME = "🇸🇬|新加坡-链式代理-家宽IP出口";
 
 function loadSandbox() {
   const sandbox = {
@@ -64,30 +65,56 @@ function assertRulePrefix(actualRules, expectedPrefix) {
   assert.strictEqual(JSON.stringify(actualPrefix), JSON.stringify(expectedPrefix));
 }
 
+function assertRuleExists(ruleLines, ruleLine) {
+  assert(ruleLines.includes(ruleLine), "Expected rule not found: " + ruleLine);
+}
+
+function assertRuleMissing(ruleLines, ruleLine) {
+  assert(!ruleLines.includes(ruleLine), "Unexpected rule found: " + ruleLine);
+}
+
+function assertNameserverPolicyOverseas(output, sandbox, domain) {
+  assert.deepStrictEqual(output.dns["nameserver-policy"][domain], sandbox.DOH_OVERSEAS);
+}
+
+function assertProcessRuleToggle(output, enabled, processName, target) {
+  const ruleLine = "PROCESS-NAME," + processName + "," + target;
+  if (enabled) assertRuleExists(output.rules, ruleLine);
+  else assertRuleMissing(output.rules, ruleLine);
+}
+
+function assertProcessRules(output, enabled, processNames, target) {
+  for (const processName of processNames) {
+    assertProcessRuleToggle(output, enabled, processName, target);
+  }
+}
+
 function testDefaultConfig() {
   const sandbox = loadSandbox();
   const config = createBaseConfig();
   const output = sandbox.main(config);
-  const chainGroupName = "🇸🇬|新加坡-链式代理-家宽IP出口";
 
   assert.strictEqual(output._miya, undefined);
   assert.strictEqual(
     output.proxies.find((proxy) => proxy.name === "自选节点 + 家宽IP")["dialer-proxy"],
     "🇸🇬|新加坡线路-链式代理-跳板",
   );
-  assert(output["proxy-groups"].some((group) => group.name === chainGroupName));
+  assert(output["proxy-groups"].some((group) => group.name === CHAIN_GROUP_NAME));
   assert(output.rules[0].startsWith("PROCESS-NAME,Tailscale,DIRECT"));
-  assert(output.rules.includes("PROCESS-NAME,tailscale,DIRECT"));
-  assert(output.rules.includes("PROCESS-NAME,tailscaled,DIRECT"));
-  assert(output.rules.includes("PROCESS-NAME,IPNExtension,DIRECT"));
-  assert(
-    output.rules.includes("PROCESS-NAME,io.tailscale.ipn.macos.network-extension,DIRECT"),
+  assertProcessRules(
+    output,
+    true,
+    [
+      "tailscale",
+      "tailscaled",
+      "IPNExtension",
+      "io.tailscale.ipn.macos.network-extension",
+      "io.tailscale.ipn.macsys.network-extension",
+    ],
+    "DIRECT",
   );
-  assert(
-    output.rules.includes("PROCESS-NAME,io.tailscale.ipn.macsys.network-extension,DIRECT"),
-  );
-  assert(output.rules.includes("DOMAIN-SUFFIX,claude.ai," + chainGroupName));
-  assert(!output.rules.includes("DOMAIN-SUFFIX,claude.ai,DIRECT"));
+  assertRuleExists(output.rules, "DOMAIN-SUFFIX,claude.ai," + CHAIN_GROUP_NAME);
+  assertRuleMissing(output.rules, "DOMAIN-SUFFIX,claude.ai,DIRECT");
   assertNoDuplicateRuleIdentities(output.rules.slice(0, 200));
   assertRulePrefix(output.rules, [
     "PROCESS-NAME,Tailscale,DIRECT",
@@ -112,30 +139,12 @@ function testDefaultConfig() {
     "DOMAIN-SUFFIX,ts.net,DIRECT",
   ]);
 
-  assert.deepStrictEqual(
-    output.dns["nameserver-policy"]["+.tailscale.com"],
-    sandbox.DOH_OVERSEAS,
-  );
-  assert.deepStrictEqual(
-    output.dns["nameserver-policy"]["+.tailscale.io"],
-    sandbox.DOH_OVERSEAS,
-  );
-  assert.deepStrictEqual(
-    output.dns["nameserver-policy"]["+.ts.net"],
-    sandbox.DOH_OVERSEAS,
-  );
-  assert.deepStrictEqual(
-    output.dns["nameserver-policy"]["+.sora.com"],
-    sandbox.DOH_OVERSEAS,
-  );
-  assert.deepStrictEqual(
-    output.dns["nameserver-policy"]["+.notebooklm.google"],
-    sandbox.DOH_OVERSEAS,
-  );
-  assert.deepStrictEqual(
-    output.dns["nameserver-policy"]["+.m365.cloud.microsoft"],
-    sandbox.DOH_OVERSEAS,
-  );
+  assertNameserverPolicyOverseas(output, sandbox, "+.tailscale.com");
+  assertNameserverPolicyOverseas(output, sandbox, "+.tailscale.io");
+  assertNameserverPolicyOverseas(output, sandbox, "+.ts.net");
+  assertNameserverPolicyOverseas(output, sandbox, "+.sora.com");
+  assertNameserverPolicyOverseas(output, sandbox, "+.notebooklm.google");
+  assertNameserverPolicyOverseas(output, sandbox, "+.m365.cloud.microsoft");
   assert(output.dns["fake-ip-filter"].includes("+.xboxlive.com"));
   assert(output.dns["fake-ip-filter"].includes("stun.*.*"));
   assert(output.dns["fallback-filter"].domain.includes("+.sora.com"));
@@ -149,19 +158,21 @@ function testDisableBrowserProcessProxy() {
   sandbox.USER_OPTIONS.enableBrowserProcessProxy = false;
   const output = sandbox.main(createBaseConfig());
 
-  assert(!output.rules.includes("PROCESS-NAME,Arc,🇸🇬|新加坡-链式代理-家宽IP出口"));
-  assert(!output.rules.includes("PROCESS-NAME,Google Chrome,🇸🇬|新加坡-链式代理-家宽IP出口"));
-  assert(output.rules.includes("PROCESS-NAME,Claude,🇸🇬|新加坡-链式代理-家宽IP出口"));
+  assertProcessRuleToggle(output, false, "Arc", CHAIN_GROUP_NAME);
+  assertProcessRuleToggle(
+    output,
+    false,
+    "Google Chrome",
+    CHAIN_GROUP_NAME,
+  );
+  assertProcessRuleToggle(output, true, "Claude", CHAIN_GROUP_NAME);
 }
 
 function testAiCliProcessProxyDefaultsOn() {
   const sandbox = loadSandbox();
   const output = sandbox.main(createBaseConfig());
 
-  assert(output.rules.includes("PROCESS-NAME,claude,🇸🇬|新加坡-链式代理-家宽IP出口"));
-  assert(output.rules.includes("PROCESS-NAME,opencode,🇸🇬|新加坡-链式代理-家宽IP出口"));
-  assert(output.rules.includes("PROCESS-NAME,gemini,🇸🇬|新加坡-链式代理-家宽IP出口"));
-  assert(output.rules.includes("PROCESS-NAME,codex,🇸🇬|新加坡-链式代理-家宽IP出口"));
+  assertProcessRules(output, true, ["claude", "opencode", "gemini", "codex"], CHAIN_GROUP_NAME);
 }
 
 function testDisableAiCliProcessProxy() {
@@ -169,10 +180,7 @@ function testDisableAiCliProcessProxy() {
   sandbox.USER_OPTIONS.enableAiCliProcessProxy = false;
   const output = sandbox.main(createBaseConfig());
 
-  assert(!output.rules.includes("PROCESS-NAME,claude,🇸🇬|新加坡-链式代理-家宽IP出口"));
-  assert(!output.rules.includes("PROCESS-NAME,opencode,🇸🇬|新加坡-链式代理-家宽IP出口"));
-  assert(!output.rules.includes("PROCESS-NAME,gemini,🇸🇬|新加坡-链式代理-家宽IP出口"));
-  assert(!output.rules.includes("PROCESS-NAME,codex,🇸🇬|新加坡-链式代理-家宽IP出口"));
+  assertProcessRules(output, false, ["claude", "opencode", "gemini", "codex"], CHAIN_GROUP_NAME);
 }
 
 function testMissingRegionFails() {
