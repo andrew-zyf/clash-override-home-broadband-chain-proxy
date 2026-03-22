@@ -15,7 +15,7 @@
  * - 使用 ES5 语法，不依赖箭头函数、解构赋值、模板字符串、
  *   展开语法、`Object.values()`、`Object.fromEntries()` 等 ES6+ 特性。
  *
- * @version 8.4
+ * @version 8.5
  */
 
 // ---------------------------------------------------------------------------
@@ -318,6 +318,71 @@ var DOMAINS_AI_DOMESTIC = {
   siliconflow: ["+.siliconflow.cn"],
 };
 
+// 域内办公软件与协作平台域名，固定保持 DIRECT。
+var DOMAINS_OFFICE_DOMESTIC = {
+  tencent_messaging_and_collab: [
+    "+.qq.com",
+    "+.qqmail.com",
+    "+.exmail.qq.com",
+    "+.weixin.qq.com",
+    "+.work.weixin.qq.com",
+    "+.docs.qq.com",
+    "+.meeting.tencent.com",
+    "+.tencentcloud.com",
+    "+.cloud.tencent.com",
+  ],
+  alibaba_productivity: [
+    "+.dingtalk.com",
+    "+.dingtalkapps.com",
+    "+.aliyundrive.com",
+    "+.quark.cn",
+    "+.teambition.com",
+    "+.aliyun.com",
+    "+.aliyuncs.com",
+    "+.alibabacloud.com",
+  ],
+  bytedance_productivity: [
+    "+.feishu.cn",
+    "+.feishu.net",
+    "+.feishucdn.com",
+    "+.larksuite.com",
+    "+.larkoffice.com",
+  ],
+  wps_productivity: [
+    "+.wps.cn",
+    "+.wps.com",
+    "+.kdocs.cn",
+    "+.kdocs.com",
+  ],
+};
+
+// 域内办公软件常见 macOS App / 进程名，固定保持 DIRECT。
+var PROCESS_NAMES_OFFICE_DOMESTIC_MACOS = [
+  "WeChat",
+  "QQ",
+  "WeCom",
+  "TencentMeeting",
+  "DingTalk",
+  "AliyunDrive",
+  "Quark",
+  "Feishu",
+  "Lark",
+  "WPS Office",
+  "WPS",
+  "WPS Office Helper",
+];
+
+// 域内办公软件常见 macOS App / 进程名对应的直连规则。
+var OFFICE_DOMESTIC_DIRECT_PROCESS_RULES = PROCESS_NAMES_OFFICE_DOMESTIC_MACOS.map(
+  function (processName) {
+    return {
+      type: "PROCESS-NAME",
+      value: processName,
+      target: RULE_TARGET_DIRECT,
+    };
+  }
+);
+
 // Tailscale 控制面域名与 MagicDNS Tailnet 域名，固定保持 DIRECT。
 var TAILSCALE_DIRECT_DOMAINS = ["+.tailscale.com", "+.tailscale.io", "+.ts.net"];
 
@@ -428,6 +493,9 @@ var ALL_CHAIN_DOMAINS = mergeStringGroups([
 // 展平后的域内 AI 域名列表，供 DNS 和规则注入复用。
 var ALL_AI_DOMESTIC_DOMAINS = flattenGroupedDomains(DOMAINS_AI_DOMESTIC);
 
+// 展平后的域内办公软件域名列表，供 DNS 和规则注入复用。
+var ALL_OFFICE_DOMESTIC_DOMAINS = flattenGroupedDomains(DOMAINS_OFFICE_DOMESTIC);
+
 // Tailscale 控制面与 MagicDNS 域名，固定使用域外 DoH 解析。
 var ALL_TAILSCALE_DIRECT_DOMAINS = uniqueStrings(TAILSCALE_DIRECT_DOMAINS.slice());
 
@@ -437,6 +505,7 @@ var ALL_DIRECT_EXTRA_DOMAINS = ALL_TAILSCALE_DIRECT_DOMAINS.slice();
 // 需要直连的域名分组，按用途分类收拢输入。
 var DIRECT_DOMAIN_GROUPS = [
   ALL_AI_DOMESTIC_DOMAINS,
+  ALL_OFFICE_DOMESTIC_DOMAINS,
   ALL_DIRECT_EXTRA_DOMAINS,
 ];
 
@@ -474,7 +543,7 @@ var SNIFFER_SKIP_DOMAINS = uniqueStrings(
 // 统一收拢直连对象，作为冲突裁决和后续生成的单一来源。
 var ALL_DIRECT_DOMAIN_PATTERNS = mergeStringGroups(DIRECT_DOMAIN_GROUPS);
 var ALL_DIRECT_PROCESS_NAMES = extractRawRuleValues(
-  TAILSCALE_DIRECT_PROCESS_RULES,
+  TAILSCALE_DIRECT_PROCESS_RULES.concat(OFFICE_DOMESTIC_DIRECT_PROCESS_RULES),
   "PROCESS-NAME",
 );
 var ALL_DIRECT_NETWORK_RULES = TAILSCALE_DIRECT_CIDR_RULES.slice();
@@ -603,6 +672,8 @@ function buildNameserverPolicy() {
   assignNameserverPolicyDomains(policy, ALL_STRICT_VALIDATION_DOMAIN_PATTERNS, DOH_OVERSEAS);
   // 域内 AI 走域内 DoH。
   assignNameserverPolicyDomains(policy, ALL_AI_DOMESTIC_DOMAINS, DOH_DOMESTIC);
+  // 域内办公软件走域内 DoH。
+  assignNameserverPolicyDomains(policy, ALL_OFFICE_DOMESTIC_DOMAINS, DOH_DOMESTIC);
   // 流媒体与域外社交走域外 DoH。
   assignNameserverPolicyDomains(policy, ALL_NON_STRICT_CHAIN_DOMAIN_PATTERNS, DOH_OVERSEAS);
 
@@ -1191,7 +1262,9 @@ function buildDirectRules() {
   addRawRulesIfNotExists(
     ruleLines,
     seenRuleIdentities,
-    TAILSCALE_DIRECT_PROCESS_RULES.concat(directNetworkRules),
+    TAILSCALE_DIRECT_PROCESS_RULES
+      .concat(OFFICE_DOMESTIC_DIRECT_PROCESS_RULES)
+      .concat(directNetworkRules),
   );
   for (i = 0; i < directDomainGroups.length; i++) {
     addSuffixRulesIfNotExists(

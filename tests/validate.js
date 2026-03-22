@@ -120,8 +120,16 @@ function testDefaultStrictConfig() {
   assertRuleExists(output.rules, "DOMAIN-SUFFIX,claude.ai," + CHAIN_GROUP_NAME);
   assertRuleExists(output.rules, "DOMAIN-SUFFIX,google.com," + CHAIN_GROUP_NAME);
   assertRuleExists(output.rules, "DOMAIN-SUFFIX,youtube.com," + CHAIN_GROUP_NAME);
+  assertRuleExists(output.rules, "DOMAIN-SUFFIX,docs.qq.com,DIRECT");
+  assertRuleExists(output.rules, "DOMAIN-SUFFIX,dingtalk.com,DIRECT");
+  assertRuleExists(output.rules, "DOMAIN-SUFFIX,feishu.cn,DIRECT");
+  assertRuleExists(output.rules, "DOMAIN-SUFFIX,wps.cn,DIRECT");
   assertRuleExists(output.rules, "PROCESS-NAME,Claude," + CHAIN_GROUP_NAME);
   assertRuleExists(output.rules, "PROCESS-NAME,claude," + CHAIN_GROUP_NAME);
+  assertRuleExists(output.rules, "PROCESS-NAME,WeChat,DIRECT");
+  assertRuleExists(output.rules, "PROCESS-NAME,DingTalk,DIRECT");
+  assertRuleExists(output.rules, "PROCESS-NAME,Feishu,DIRECT");
+  assertRuleExists(output.rules, "PROCESS-NAME,WPS Office,DIRECT");
   assertRuleMissing(output.rules, "PROCESS-NAME,Arc," + CHAIN_GROUP_NAME);
   assertRuleMissing(output.rules, "DOMAIN-SUFFIX,claude.ai,DIRECT");
   assertNoDuplicateRuleIdentities(output.rules.slice(0, 250));
@@ -133,20 +141,20 @@ function testDefaultStrictConfig() {
     "PROCESS-NAME,IPNExtension,DIRECT",
     "PROCESS-NAME,io.tailscale.ipn.macos.network-extension,DIRECT",
     "PROCESS-NAME,io.tailscale.ipn.macsys.network-extension,DIRECT",
+    "PROCESS-NAME,WeChat,DIRECT",
+    "PROCESS-NAME,QQ,DIRECT",
+    "PROCESS-NAME,WeCom,DIRECT",
+    "PROCESS-NAME,TencentMeeting,DIRECT",
+    "PROCESS-NAME,DingTalk,DIRECT",
+    "PROCESS-NAME,AliyunDrive,DIRECT",
+    "PROCESS-NAME,Quark,DIRECT",
+    "PROCESS-NAME,Feishu,DIRECT",
+    "PROCESS-NAME,Lark,DIRECT",
+    "PROCESS-NAME,WPS Office,DIRECT",
+    "PROCESS-NAME,WPS,DIRECT",
+    "PROCESS-NAME,WPS Office Helper,DIRECT",
     "IP-CIDR,100.64.0.0/10,DIRECT,no-resolve",
     "IP-CIDR,100.100.100.100/32,DIRECT,no-resolve",
-    "IP-CIDR6,fd7a:115c:a1e0::/48,DIRECT,no-resolve",
-    "DOMAIN-SUFFIX,tongyi.aliyun.com,DIRECT",
-    "DOMAIN-SUFFIX,qianwen.aliyun.com,DIRECT",
-    "DOMAIN-SUFFIX,dashscope.aliyuncs.com,DIRECT",
-    "DOMAIN-SUFFIX,moonshot.cn,DIRECT",
-    "DOMAIN-SUFFIX,chatglm.cn,DIRECT",
-    "DOMAIN-SUFFIX,zhipuai.cn,DIRECT",
-    "DOMAIN-SUFFIX,bigmodel.cn,DIRECT",
-    "DOMAIN-SUFFIX,siliconflow.cn,DIRECT",
-    "DOMAIN-SUFFIX,tailscale.com,DIRECT",
-    "DOMAIN-SUFFIX,tailscale.io,DIRECT",
-    "DOMAIN-SUFFIX,ts.net,DIRECT",
   ]);
 
   assertNameserverPolicyOverseas(output, sandbox, "+.tailscale.com");
@@ -155,6 +163,10 @@ function testDefaultStrictConfig() {
   assertNameserverPolicyOverseas(output, sandbox, "+.sora.com");
   assertNameserverPolicyOverseas(output, sandbox, "+.notebooklm.google");
   assertNameserverPolicyOverseas(output, sandbox, "+.m365.cloud.microsoft");
+  assert.deepStrictEqual(output.dns["nameserver-policy"]["+.docs.qq.com"], sandbox.DOH_DOMESTIC);
+  assert.deepStrictEqual(output.dns["nameserver-policy"]["+.dingtalk.com"], sandbox.DOH_DOMESTIC);
+  assert.deepStrictEqual(output.dns["nameserver-policy"]["+.feishu.cn"], sandbox.DOH_DOMESTIC);
+  assert.deepStrictEqual(output.dns["nameserver-policy"]["+.wps.cn"], sandbox.DOH_DOMESTIC);
   assert(output.dns["fake-ip-filter"].includes("+.xboxlive.com"));
   assert(output.dns["fake-ip-filter"].includes("stun.*.*"));
   assert(output.dns["fallback-filter"].domain.includes("+.sora.com"));
