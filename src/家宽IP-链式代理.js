@@ -28,8 +28,6 @@ var USER_OPTIONS = {
   chainRegion: "SG",
   // 手动指定跳板节点名，留空则按 chainRegion 自动匹配。
   manualNode: "",
-  // 是否启用 AI 严格链式代理模式；关闭后回退到兼容模式。
-  strictAiRouting: true,
   // 是否将浏览器主进程和 helper 进程一并纳入链式代理。
   enableBrowserProcessProxy: false,
   // 是否将常见 AI CLI 可执行文件纳入链式代理。
@@ -1215,10 +1213,8 @@ function assertManagedRuleTarget(ruleLines, type, value, target) {
   );
 }
 
-// 在严格模式下验证专用代理组与关键规则目标，避免静默泄漏。
+// 验证关键 AI 规则目标，避免静默泄漏或错误地区回退。
 function validateManagedRouting(config, strictAiTarget, chainGroupName) {
-  if (!USER_OPTIONS.strictAiRouting) return;
-
   if (findProxyGroupByName(config["proxy-groups"], MANAGED_PROXY_GROUP_NAMES.strictAi)) {
     throw new Error(
       "[家宽IP-链式代理] 遗留的 AI 严格链式代理组未被清理",

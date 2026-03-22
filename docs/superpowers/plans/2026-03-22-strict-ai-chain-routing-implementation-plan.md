@@ -10,11 +10,9 @@
 Implement strict AI chain routing without changing the user's core workflow:
 
 - the user still chooses `chainRegion` manually
-- when `strictAiRouting=true`, AI and related support traffic must be forced
-  through the selected region's chain path
+- AI and related support traffic must be forced through the selected region's
+  chain path
 - if that strict path cannot be honored, the script must fail closed
-- when `strictAiRouting=false`, compatibility mode keeps existing chain-region
-  behavior with weaker guarantees and without the extra strict-mode validation layer
 
 The work should preserve current non-AI routing behavior unless a small change
 is required to avoid regressions while introducing the strict AI path.
@@ -45,7 +43,6 @@ Sniffer, rules, and tests consume the same classification data.
 
 Planned changes:
 
-- Add a user-visible `strictAiRouting` option to `USER_OPTIONS`, default `true`
 - Consolidate existing grouped constants into canonical buckets:
   - strict AI domains
   - strict support-platform domains
@@ -88,7 +85,6 @@ Acceptance criteria:
   - `sniffer.force-domain` where applicable
 - Direct exclusions such as Tailscale and local-network entries appear in the
   expected direct/sniffer exclusion paths
-- `strictAiRouting=false` does not weaken canonical DNS and Sniffer generation
 
 ### Phase 3: Resolve the strict target directly
 
@@ -101,18 +97,13 @@ Planned changes:
 - Build or validate:
   - current region relay group
   - current region chain exit group
-- In strict mode:
-  - managed AI/support rules must target the selected region chain exit group directly
-  - any legacy explicit AI proxy group must be removed from the generated config
-- In compatibility mode:
-  - managed AI/support rules still target the selected region chain exit group directly
-  - no extra strict-mode validation layer is required
+- Managed AI/support rules must target the selected region chain exit group directly
+- Any legacy explicit AI proxy group must be removed from the generated config
 
 Acceptance criteria:
 
-- Strict mode targets the selected chain exit directly
-- Compatibility mode has the same emitted target but weaker validation guarantees
-- Neither mode silently routes strict AI/support traffic to `DIRECT`, `节点选择`,
+- The strict contract targets the selected chain exit directly
+- The script does not silently route strict AI/support traffic to `DIRECT`, `节点选择`,
   or a different region
 
 ### Phase 4: Rebuild managed rule emission around mode-aware targets
@@ -128,8 +119,7 @@ Planned changes:
   - strict AI/support domain rules
   - non-AI managed categories that remain behaviorally unchanged
 - Add a clear target resolver:
-  - strict mode target = selected region chain exit group
-  - compatibility mode target = selected region chain exit group
+  - target = selected region chain exit group
 - Keep rule ordering deterministic:
   - direct-only protections first
   - managed AI/support process rules next
@@ -140,14 +130,14 @@ Planned changes:
 
 Acceptance criteria:
 
-- Every strict AI/support rule uses exactly one resolved target for the current mode
+- Every strict AI/support rule uses exactly one resolved target
 - Existing subscription rules that conflict with managed AI/support rules are removed
 - No strict AI/support rule falls through to `MATCH` or old subscription targets
 
 ### Phase 5: Add fail-closed strict validation
 
 Goal:
-Make strict mode refuse misconfigured or incomplete routes.
+Make the script refuse misconfigured or incomplete strict routes.
 
 Planned changes:
 
@@ -157,14 +147,10 @@ Planned changes:
   - direct strict-target correctness for key managed rules
   - removal of any legacy explicit AI proxy group
   - absence of target leakage for key managed rules
-- Keep compatibility mode on baseline checks only:
-  - selected region relay resolution
-  - valid `manualNode`
 
 Acceptance criteria:
 
-- `strictAiRouting=true` throws on any broken strict-path construction
-- `strictAiRouting=false` does not pretend to provide the same guarantees
+- The script throws on any broken strict-path construction
 - Error messages identify the broken guarantee clearly
 
 ### Phase 6: Expand regression coverage
@@ -174,12 +160,9 @@ Turn `tests/validate.js` into a strict-routing safety net.
 
 Planned tests:
 
-- strict mode default path
+- default path
   - no legacy explicit AI proxy group remains
   - key AI/support domains map directly to the selected chain exit
-- compatibility mode path
-  - key AI/support rules target the selected chain exit group directly
-  - DNS and Sniffer outputs remain canonical
 - direct-only protection
   - Tailscale processes, domains, and CIDRs stay direct
   - domestic AI remains direct
@@ -197,7 +180,7 @@ Planned tests:
 
 Acceptance criteria:
 
-- `node tests/validate.js` covers both strict and compatibility modes
+- `node tests/validate.js` covers the single strict contract end to end
 - A regression in target selection or leakage fails locally without manual inspection
 
 ### Phase 7: Rewrite README contract
@@ -207,14 +190,10 @@ Align user-facing docs with the new routing contract.
 
 Planned changes:
 
-- Document `strictAiRouting` as a user-visible option
-- Explain strict mode:
+- Explain the unconditional contract:
   - selected `chainRegion`
   - direct lock to the selected chain exit
   - fail-closed behavior
-- Explain compatibility mode:
-  - same selected region
-  - weaker guarantees
 - Clarify what this repository does and does not promise
 - Add a validation checklist for:
   - proxy-group bindings
@@ -224,26 +203,23 @@ Planned changes:
 Acceptance criteria:
 
 - README reflects the exact spec contract
-- User can tell the difference between strict mode and compatibility mode
 - User can verify the selected chain path after changing `chainRegion`
 
 ## File-Level Plan
 
 ### [`src/家宽IP-链式代理.js`](/Users/az/Projects/claude/repositories/clash-override-chain-proxy/src/家宽IP-链式代理.js)
 
-- Add `strictAiRouting` to `USER_OPTIONS`
 - Introduce canonical strict/direct data buckets
-- Add target-resolution helpers for strict vs compatibility mode
+- Add direct target-resolution helpers
 - Remove any legacy explicit AI proxy group from generated output
 - Refactor DNS, Sniffer, and rule generation to read from canonical data
 - Add strict validation helpers and mode-aware failure behavior
 
 ### [`tests/validate.js`](/Users/az/Projects/claude/repositories/clash-override-chain-proxy/tests/validate.js)
 
-- Extend test fixtures for strict mode and compatibility mode
+- Extend test fixtures for the single strict contract
 - Add explicit assertions for:
-  - strict mode direct-to-chain-exit targeting
-  - compatibility mode direct-to-chain-exit targeting
+  - direct-to-chain-exit targeting
   - legacy explicit AI proxy group removal
   - direct-only precedence
   - no leakage
@@ -251,14 +227,12 @@ Acceptance criteria:
 
 ### [`README.md`](/Users/az/Projects/claude/repositories/clash-override-chain-proxy/README.md)
 
-- Document `strictAiRouting`
 - Reframe the contract around forced current-region routing
-- Explain strict vs compatibility mode
 - Add verification and failure-behavior guidance
 
 ## Execution Order
 
-1. Add canonical routing data and `strictAiRouting`
+1. Add canonical routing data
 2. Refactor DNS and Sniffer to consume canonical data
 3. Add direct strict-target resolution and legacy group cleanup
 4. Refactor managed rule emission around mode-aware targets
@@ -280,7 +254,6 @@ ensures tests land before user-facing wording is finalized.
 
 - Keep non-AI routing categories behaviorally unchanged unless regression prevention requires a minimal edit
 - Reuse existing grouped constants as the initial extraction source
-- Add explicit tests for both `strictAiRouting=true` and `strictAiRouting=false`
 - Validate key outputs at multiple layers:
   - DNS
   - Sniffer
@@ -292,6 +265,6 @@ ensures tests land before user-facing wording is finalized.
 The implementation can be considered ready for coding only when:
 
 - the plan is approved by the user
-- strict and compatibility mode contracts are both testable
+- the single strict contract is testable
 - file-level change scope is understood
 - non-AI behavior preservation is treated as an explicit regression constraint

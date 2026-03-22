@@ -18,8 +18,8 @@ The design combines two enforcement strategies:
 
 1. Rule enforcement: AI and related traffic must be explicitly captured by
    managed DNS, Sniffer, process, and domain rules.
-2. Fail-closed direct-target enforcement: in strict mode, all managed
-   AI-related traffic must target the chain proxy exit for the currently
+2. Fail-closed direct-target enforcement: all managed AI-related traffic must
+   target the chain proxy exit for the currently
    selected `chainRegion` directly, and the script must refuse silent fallback.
 
 ## Goals
@@ -273,8 +273,8 @@ Create or validate:
 - current region chain exit group
 - strict AI managed target
 
-In strict mode, the strict AI managed target is the selected region chain exit
-group itself. The script should also remove any legacy explicit AI proxy group
+The strict AI managed target is the selected region chain exit group itself.
+The script should also remove any legacy explicit AI proxy group
 to prevent redundant routing layers from surviving in the output.
 
 ### Stage 4: Managed rule emission and fail-closed validation
@@ -296,11 +296,9 @@ The design keeps the existing user-facing model with limited adjustments.
 - `chainRegion`
 - `manualNode`
 - `enableAiCliProcessProxy`
-- `strictAiRouting`
 
 ### Change
 
-- `strictAiRouting` should be a user-visible config switch and should default to `true`
 - `enableBrowserProcessProxy` should default to `false`
 
 Reason:
@@ -309,31 +307,15 @@ AI and related support services. Full-browser process capture should remain
 optional because it widens the trust boundary and adds traffic unrelated to the
 account continuity problem.
 
-`strictAiRouting` should not remain an internal-only concept. It should be
-explicit in the user-facing configuration so the repository's routing contract is
-visible, inspectable, and intentionally controlled by the user.
-
-When `strictAiRouting` is `true`, the script must enforce the full strict path:
+The strict-routing contract is now unconditional:
 
 - DNS and Sniffer strict object enforcement
 - direct targeting of the selected `chainRegion` chain exit
 - fail-closed validation
 
-When `strictAiRouting` is `false`, the script enters an explicit compatibility
-mode with a weaker contract:
-
-- canonical strict/direct object assembly remains the same
-- DNS and Sniffer generation remain the same
-- AI-related traffic is still routed by managed process and domain rules, and
-  those rules continue to target the current `chainRegion` chain exit group directly
-- fail-closed validation is limited to existing baseline checks such as selected
-  region relay resolution and valid `manualNode` lookup
-- the repository no longer guarantees that all managed AI/support traffic uses
-  only the selected chain exit, or that strict-path leakage checks pass
-
-This mode exists for user-controlled fallback behavior and backward
-compatibility, not as an implicit degradation path. The implementation must make
-the mode distinction obvious in code, tests, and documentation.
+This strict path is unconditional for managed foreign AI websites, services, and
+support platforms. The repository should not expose a user-facing switch that
+weakens this contract.
 
 Non-AI chain-routing categories in the current script, including browser and
 media/social routing, remain behaviorally unchanged in this work unless a change
@@ -351,8 +333,7 @@ Examples of failure classes:
 - a legacy explicit AI proxy group remains in the generated config
 - managed rules would leak into non-strict targets
 
-When `strictAiRouting` is `true`, the script should not degrade to a weaker
-routing mode.
+The script should not degrade to a weaker routing mode.
 
 ## Testing Strategy
 

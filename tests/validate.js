@@ -106,7 +106,6 @@ function testDefaultStrictConfig() {
   });
   const output = sandbox.main(config);
 
-  assert.strictEqual(sandbox.USER_OPTIONS.strictAiRouting, true);
   assert.strictEqual(sandbox.USER_OPTIONS.enableBrowserProcessProxy, false);
   assert.strictEqual(output._miya, undefined);
   assert.strictEqual(
@@ -165,27 +164,6 @@ function testDefaultStrictConfig() {
   assert(output.sniffer["skip-domain"].includes("+.tailscale.com"));
   assert(output.sniffer["skip-domain"].includes("+.tailscale.io"));
   assert(output.sniffer["skip-domain"].includes("+.ts.net"));
-}
-
-function testCompatibilityMode() {
-  const sandbox = loadSandbox();
-  sandbox.USER_OPTIONS.strictAiRouting = false;
-  const config = createBaseConfig();
-  config["proxy-groups"].push({
-    name: LEGACY_STRICT_AI_GROUP_NAME,
-    type: "select",
-    proxies: ["错误旧组"],
-  });
-  const output = sandbox.main(config);
-
-  assert(!findGroup(output, LEGACY_STRICT_AI_GROUP_NAME), "Compatibility mode should remove legacy strict AI group");
-  assertRuleExists(output.rules, "DOMAIN-SUFFIX,claude.ai," + CHAIN_GROUP_NAME);
-  assertRuleExists(output.rules, "DOMAIN-SUFFIX,google.com," + CHAIN_GROUP_NAME);
-  assertRuleExists(output.rules, "PROCESS-NAME,Claude," + CHAIN_GROUP_NAME);
-  assertRuleExists(output.rules, "PROCESS-NAME,claude," + CHAIN_GROUP_NAME);
-  assertNameserverPolicyOverseas(output, sandbox, "+.sora.com");
-  assert(output.dns["fallback-filter"].domain.includes("+.sora.com"));
-  assert(output.sniffer["force-domain"].includes("+.claude.ai"));
 }
 
 function testEnableBrowserProcessProxy() {
@@ -259,7 +237,6 @@ function testMissingStrictAiTargetFails() {
 }
 
 testDefaultStrictConfig();
-testCompatibilityMode();
 testEnableBrowserProcessProxy();
 testAiCliProcessProxyDefaultsOn();
 testDisableAiCliProcessProxy();
