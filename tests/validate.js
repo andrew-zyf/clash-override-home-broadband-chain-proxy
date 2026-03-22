@@ -12,6 +12,25 @@ const TEST_MIYA_CREDENTIALS = {
   relay: { server: "1.2.3.4", port: 8000 },
   transit: { server: "transit.example.com", port: 8001 }
 };
+const BROWSER_APPS = ["Comet", "Dia", "Atlas", "Google Chrome", "SunBrowser"];
+const BROWSER_HELPER_SUFFIXES = [
+  "Helper",
+  "Helper (Renderer)",
+  "Helper (GPU)",
+  "Helper (Plugin)",
+  "Helper (Alerts)"
+];
+
+function buildBrowserProcessNames(browserApps, helperSuffixes) {
+  const processNames = [];
+  for (const browserApp of browserApps) {
+    processNames.push(browserApp);
+    for (const helperSuffix of helperSuffixes) {
+      processNames.push(browserApp + " " + helperSuffix);
+    }
+  }
+  return processNames;
+}
 
 // 关键链路目标和受管规则前缀。
 const EXPECTED = {
@@ -59,7 +78,7 @@ const EXPECTED = {
     ]
   },
   process: {
-    browserManaged: ["Comet", "Dia", "Atlas", "Google Chrome"],
+    browserManaged: buildBrowserProcessNames(BROWSER_APPS, BROWSER_HELPER_SUFFIXES),
     browserExcluded: ["Arc", "Microsoft Edge"],
     aiCliManaged: ["claude", "gemini", "codex"],
     aiCliExcluded: ["opencode"],

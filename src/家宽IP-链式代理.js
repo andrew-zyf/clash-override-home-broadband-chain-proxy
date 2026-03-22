@@ -22,7 +22,7 @@
  * - 使用 ES5 语法，不依赖箭头函数、解构赋值、模板字符串、
  *   展开语法、`Object.values()`、`Object.fromEntries()` 等 ES6+ 特性。
  *
- * @version 8.6
+ * @version 8.7
  */
 
 // ---------------------------------------------------------------------------
@@ -337,17 +337,19 @@ var SOURCE_PROCESSES = {
     ],
     aiCli: ["claude", "gemini", "codex"],
     browser: {
-      confirmed: [
+      apps: [
         "Comet",
         "Dia",
         "Atlas",
-        "Google Chrome"
+        "Google Chrome",
+        "SunBrowser"
       ],
-      inferred: [
-        "Comet Helper",
-        "Dia Helper",
-        "Google Chrome Helper",
-        "Atlas Helper"
+      helperSuffixes: [
+        "Helper",
+        "Helper (Renderer)",
+        "Helper (GPU)",
+        "Helper (Plugin)",
+        "Helper (Alerts)"
       ]
     }
   }
@@ -388,6 +390,22 @@ function mergeStringGroups(groups) {
     mergedValues.push.apply(mergedValues, groups[i]);
   }
   return uniqueStrings(mergedValues);
+}
+
+// 为 Chromium 类浏览器展开主进程及显式 helper 进程名。
+function expandBrowserProcessNames(browserAppNames, helperSuffixes) {
+  var processNames = [];
+  var i;
+  var j;
+
+  for (i = 0; i < browserAppNames.length; i++) {
+    processNames.push(browserAppNames[i]);
+    for (j = 0; j < helperSuffixes.length; j++) {
+      processNames.push(browserAppNames[i] + " " + helperSuffixes[j]);
+    }
+  }
+
+  return uniqueStrings(processNames);
 }
 
 // 为字符串数组构建便于查询的哈希表。
@@ -512,10 +530,10 @@ function buildDerivedProcessNames() {
       cli: uniqueStrings(SOURCE_PROCESSES.chain.aiCli.slice())
     },
     browser: {
-      all: mergeStringGroups([
-        SOURCE_PROCESSES.chain.browser.confirmed,
-        SOURCE_PROCESSES.chain.browser.inferred
-      ])
+      all: expandBrowserProcessNames(
+        SOURCE_PROCESSES.chain.browser.apps,
+        SOURCE_PROCESSES.chain.browser.helperSuffixes
+      )
     }
   };
 
