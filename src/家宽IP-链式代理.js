@@ -4,8 +4,16 @@
  * 功能：
  * 1. 注入 MiyaIP 链式代理节点。
  * 2. 覆写 DNS 与域名嗅探配置。
- * 3. 注入 AI 服务、浏览器、基础平台和社交与流媒体规则。
- * 4. 生成链式代理所需代理组。
+ * 3. 注入 AI 严格链式代理、浏览器链式代理和三类 DIRECT 规则。
+ * 4. 生成链式代理所需代理组并校验关键目标是否正确写入。
+ *
+ * 总体分组说明：
+ * 1. 用户参数：只放用户手动可改的入口。
+ * 2. 基础常量：地区、节点、错误前缀、代理组命名等稳定常量。
+ * 3. 原始分类数据源：按域外 AI、浏览器、域内直连、域外应用直连、网络直连拆开维护。
+ * 4. 通用数据处理工具：只做去重、展平、排除、错误构建等纯工具操作。
+ * 5. 派生分类与统一入口：把原始数据源收敛成 DNS、Sniffer、规则生成共享的单一入口。
+ * 6. 执行函数：按初始化、DNS/Sniffer、代理链路、规则注入、最终校验的阅读顺序排列。
  *
  * 依赖：
  * - 需先执行 `MiyaIP 凭证.js`，向 `config._miya` 注入凭证。
@@ -35,7 +43,7 @@ var USER_OPTIONS = {
 };
 
 // ---------------------------------------------------------------------------
-// 节点与地区常量
+// 基础常量
 // ---------------------------------------------------------------------------
 
 // 按节点名特征识别地区，并提供地区标签与旗帜。
@@ -80,7 +88,7 @@ var GROUP_NAME_SUFFIXES = {
 var LEGACY_PROXY_GROUP_NAMES = ["AI 严格链式代理"];
 
 // ---------------------------------------------------------------------------
-// DNS 域名组常量
+// 原始分类数据源
 // ---------------------------------------------------------------------------
 
 // 域外服务优先使用的 DoH 服务器列表。
@@ -341,6 +349,10 @@ var NETWORK_DIRECT_CIDR_RULES = [
   { type: "IP-CIDR6", value: "fd7a:115c:a1e0::/48", target: RULE_TARGET_DIRECT },
 ];
 
+// ---------------------------------------------------------------------------
+// 通用数据处理工具
+// ---------------------------------------------------------------------------
+
 // 对字符串列表做稳定去重，保留首次出现的顺序。
 function uniqueStrings(values) {
   var uniqueValues = [];
@@ -406,14 +418,9 @@ function createUserError(message) {
   return new Error(ERROR_PREFIX + message);
 }
 
-// 合并多组原生规则对象并保持稳定顺序。
-function mergeRawRuleGroups(rawRuleGroups) {
-  var mergedRules = [];
-  for (var i = 0; i < rawRuleGroups.length; i++) {
-    mergedRules.push.apply(mergedRules, rawRuleGroups[i]);
-  }
-  return mergedRules;
-}
+// ---------------------------------------------------------------------------
+// 派生分类与统一入口
+// ---------------------------------------------------------------------------
 
 // 展平后的 Apple 域名列表，供 DNS 和规则注入复用。
 var ALL_APPLE_DOMAINS = flattenGroupedDomains(DOMAINS_APPLE);
@@ -426,13 +433,6 @@ var ALL_CHAIN_AI_DOMAINS = flattenGroupedDomains(DOMAINS_CHAIN_AI);
 
 // 展平后的链式代理媒体和社交域名列表，供 DNS 和规则注入复用。
 var ALL_CHAIN_MEDIA_DOMAINS = flattenGroupedDomains(DOMAINS_CHAIN_MEDIA);
-
-// 展平后的全部链式代理域名列表，供 DNS 覆写和嗅探配置复用。
-var ALL_CHAIN_DOMAINS = mergeStringGroups([
-  ALL_CHAIN_AI_DOMAINS,
-  ALL_CHAIN_PLATFORM_DOMAINS,
-  ALL_CHAIN_MEDIA_DOMAINS,
-]);
 
 // 展平后的域内 AI 域名列表，供 DNS 和规则注入复用。
 var ALL_AI_DOMESTIC_DOMAINS = flattenGroupedDomains(DOMAINS_AI_DOMESTIC);
@@ -450,13 +450,6 @@ var DIRECT_DOMAIN_SOURCES = {
   domestic: [ALL_AI_DOMESTIC_DOMAINS, ALL_OFFICE_DOMESTIC_DOMAINS],
   overseasApps: [ALL_OVERSEAS_APP_DIRECT_DOMAINS],
 };
-
-// 链式代理出口测试与通用静态资源域名。
-var CHAIN_PROXY_SUPPORT_SUFFIXES = uniqueStrings([
-  "cdn.cloudflare.net",
-  "ping0.cc",
-  "ipinfo.io",
-]);
 
 // DNS `fallback-filter` 额外补充的域名模式。
 var DNS_FALLBACK_EXTRA_DOMAINS = uniqueStrings([
@@ -560,48 +553,13 @@ var MANAGED_RULE_ASSERTIONS = [
 ];
 
 // ---------------------------------------------------------------------------
-// 主入口
+// 执行装配与初始化
 // ---------------------------------------------------------------------------
 
-// 把带通配前缀的域名模式转换成规则使用的裸域名后缀。
-function toSuffix(domainPattern) {
-  return domainPattern.replace(DOMAIN_WILDCARD_PREFIX, "");
-}
-
-// 按固定顺序执行凭证读取、DNS/Sniffer 注入、代理链路注入和规则注入。
-function main(config) {
-  var miyaCredentials = takeMiyaCredentials(config);
-  var routingTargets;
-
-  initializeManagedConfig(config);
-  applyDnsAndSniffer(config);
-  injectMiyaProxies(config, miyaCredentials);
-
-  routingTargets = resolveRoutingTargets(
-    config,
-    USER_OPTIONS.chainRegion,
-    USER_OPTIONS.manualNode,
-  );
-  applyManagedRouting(config, routingTargets);
-  validateManagedRouting(config, routingTargets);
-
-  return config;
-}
-
-// ---------------------------------------------------------------------------
-// 凭证读取
-// ---------------------------------------------------------------------------
-
-// 读取并移除注入到 `config._miya` 的 MiyaIP 凭证。
-function takeMiyaCredentials(config) {
-  if (!config._miya) {
-    throw createUserError(
-      "缺少 config._miya，请确保 MiyaIP 凭证.js 已启用且排序在本脚本之前",
-    );
-  }
-  var miyaCredentials = config._miya;
-  delete config._miya; // 防止凭证输出到最终配置
-  return miyaCredentials;
+// 在所有修改前确保主配置存在脚本依赖的基础容器，并清理旧残留。
+function initializeManagedConfig(config) {
+  ensureProxyContainers(config);
+  removeLegacyProxyGroups(config["proxy-groups"]);
 }
 
 // ---------------------------------------------------------------------------
@@ -612,12 +570,6 @@ function takeMiyaCredentials(config) {
 function applyDnsAndSniffer(config) {
   config.dns = buildDnsConfig();
   config.sniffer = buildSnifferConfig();
-}
-
-// 在所有修改前确保主配置存在脚本依赖的基础容器。
-function initializeManagedConfig(config) {
-  ensureProxyContainers(config);
-  removeLegacyProxyGroups(config["proxy-groups"]);
 }
 
 // 把一组域名统一绑定到同一套 DoH 服务器。
@@ -1325,4 +1277,45 @@ function validateManagedRouting(config, routingTargets) {
       routingTargets.strictAiTarget,
     );
   }
+}
+
+// ---------------------------------------------------------------------------
+// 主流程入口
+// ---------------------------------------------------------------------------
+
+// 把带通配前缀的域名模式转换成规则使用的裸域名后缀。
+function toSuffix(domainPattern) {
+  return domainPattern.replace(DOMAIN_WILDCARD_PREFIX, "");
+}
+
+// 读取并移除注入到 `config._miya` 的 MiyaIP 凭证。
+function takeMiyaCredentials(config) {
+  if (!config._miya) {
+    throw createUserError(
+      "缺少 config._miya，请确保 MiyaIP 凭证.js 已启用且排序在本脚本之前",
+    );
+  }
+  var miyaCredentials = config._miya;
+  delete config._miya; // 防止凭证输出到最终配置
+  return miyaCredentials;
+}
+
+// 按初始化、DNS/Sniffer、代理链路、规则注入、最终校验的顺序装配输出配置。
+function main(config) {
+  var miyaCredentials = takeMiyaCredentials(config);
+  var routingTargets;
+
+  initializeManagedConfig(config);
+  applyDnsAndSniffer(config);
+  injectMiyaProxies(config, miyaCredentials);
+
+  routingTargets = resolveRoutingTargets(
+    config,
+    USER_OPTIONS.chainRegion,
+    USER_OPTIONS.manualNode,
+  );
+  applyManagedRouting(config, routingTargets);
+  validateManagedRouting(config, routingTargets);
+
+  return config;
 }
