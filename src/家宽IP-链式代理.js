@@ -15,7 +15,7 @@
  * - 使用 ES5 语法，不依赖箭头函数、解构赋值、模板字符串、
  *   展开语法、`Object.values()`、`Object.fromEntries()` 等 ES6+ 特性。
  *
- * @version 8.5
+ * @version 8.6
  */
 
 // ---------------------------------------------------------------------------
@@ -203,29 +203,21 @@ var PROCESS_NAMES_CHAIN_AI_MACOS = [
   "Perplexity Helper",
   "Cursor",
   "Cursor Helper",
-  "Windsurf",
-  "Windsurf Helper"
 ];
 
 // 可选纳入链式代理的 AI CLI 可执行文件名，默认开启。
-var PROCESS_NAMES_CHAIN_AI_CLI = ["claude", "opencode", "gemini", "codex"];
+var PROCESS_NAMES_CHAIN_AI_CLI = ["claude", "gemini", "codex"];
 
 // 官方资料可直接确认的 macOS 浏览器主进程名。
 var PROCESS_NAMES_CHAIN_BROWSER_MACOS_CONFIRMED = [
-  "Arc",
   "Comet",
   "Dia",
   "Atlas",
   "Google Chrome",
-  "Microsoft Edge",
 ];
 
 // 基于 Chromium 进程命名模式推断的浏览器 helper 进程名。
 var PROCESS_NAMES_CHAIN_BROWSER_MACOS_CHROMIUM_INFERRED = [
-  "Arc Helper",
-  "Arc Helper (GPU)",
-  "Arc Helper (Plugin)",
-  "Arc Helper (Renderer)",
   "Comet Helper",
   "Comet Helper (GPU)",
   "Comet Helper (Plugin)",
@@ -242,10 +234,6 @@ var PROCESS_NAMES_CHAIN_BROWSER_MACOS_CHROMIUM_INFERRED = [
   "Atlas Helper (GPU)",
   "Atlas Helper (Plugin)",
   "Atlas Helper (Renderer)",
-  "Microsoft Edge Helper",
-  "Microsoft Edge Helper (GPU)",
-  "Microsoft Edge Helper (Plugin)",
-  "Microsoft Edge Helper (Renderer)",
 ];
 
 // 需要统一走链式代理的 macOS 浏览器 App / 进程名。
@@ -253,22 +241,6 @@ var PROCESS_NAMES_CHAIN_BROWSER_MACOS = mergeStringGroups([
   PROCESS_NAMES_CHAIN_BROWSER_MACOS_CONFIRMED,
   PROCESS_NAMES_CHAIN_BROWSER_MACOS_CHROMIUM_INFERRED,
 ]);
-
-// 需要统一走链式代理的 macOS 基础平台 App / 进程名。
-var PROCESS_NAMES_CHAIN_PLATFORM_MACOS = [
-  "Google Drive",
-  "Google Drive Helper",
-  "Microsoft Teams",
-  "Microsoft Teams Helper",
-  "Microsoft Outlook",
-  "Microsoft Word",
-  "Microsoft Excel",
-  "Microsoft PowerPoint",
-  "OneDrive",
-  "Visual Studio Code",
-  "Code",
-  "Code Helper",
-];
 
 // 需要统一走链式代理的流媒体和域外社交域名。
 var DOMAINS_CHAIN_MEDIA = {
@@ -357,48 +329,16 @@ var DOMAINS_OFFICE_DOMESTIC = {
   ],
 };
 
-// 域内办公软件常见 macOS App / 进程名，固定保持 DIRECT。
-var PROCESS_NAMES_OFFICE_DOMESTIC_MACOS = [
-  "WeChat",
-  "QQ",
-  "WeCom",
-  "TencentMeeting",
-  "DingTalk",
-  "AliyunDrive",
-  "Quark",
-  "Feishu",
-  "Lark",
-  "WPS Office",
-  "WPS",
-  "WPS Office Helper",
-];
+// 域外应用直连域名，当前先实装 Tailscale；Typeless 预留到后续补充。
+var DOMAINS_APPS_OVERSEAS_DIRECT = {
+  tailscale: ["+.tailscale.com", "+.tailscale.io", "+.ts.net"],
+};
 
-// Tailscale 控制面域名与 MagicDNS Tailnet 域名，固定保持 DIRECT。
-var TAILSCALE_DIRECT_DOMAINS = ["+.tailscale.com", "+.tailscale.io", "+.ts.net"];
-
-// Tailnet 地址段必须保持 DIRECT，避免 Tailscale 数据面进入家宽链式代理。
-var TAILSCALE_DIRECT_CIDR_RULES = [
+// 网络地址直连，当前主要用于 Tailnet 地址段。
+var NETWORK_DIRECT_CIDR_RULES = [
   { type: "IP-CIDR", value: "100.64.0.0/10", target: RULE_TARGET_DIRECT },
   { type: "IP-CIDR", value: "100.100.100.100/32", target: RULE_TARGET_DIRECT },
   { type: "IP-CIDR6", value: "fd7a:115c:a1e0::/48", target: RULE_TARGET_DIRECT },
-];
-
-// macOS 上常见的 Tailscale 相关进程名，覆盖 App Store、Standalone 和 CLI 变体。
-var TAILSCALE_DIRECT_PROCESS_RULES = [
-  { type: "PROCESS-NAME", value: "Tailscale", target: RULE_TARGET_DIRECT },
-  { type: "PROCESS-NAME", value: "tailscale", target: RULE_TARGET_DIRECT },
-  { type: "PROCESS-NAME", value: "tailscaled", target: RULE_TARGET_DIRECT },
-  { type: "PROCESS-NAME", value: "IPNExtension", target: RULE_TARGET_DIRECT },
-  {
-    type: "PROCESS-NAME",
-    value: "io.tailscale.ipn.macos.network-extension",
-    target: RULE_TARGET_DIRECT,
-  },
-  {
-    type: "PROCESS-NAME",
-    value: "io.tailscale.ipn.macsys.network-extension",
-    target: RULE_TARGET_DIRECT,
-  },
 ];
 
 // 对字符串列表做稳定去重，保留首次出现的顺序。
@@ -466,19 +406,6 @@ function createUserError(message) {
   return new Error(ERROR_PREFIX + message);
 }
 
-// 把一组进程名批量转成原生 `PROCESS-NAME` 规则。
-function buildDirectProcessRules(processNames) {
-  var rawRules = [];
-  for (var i = 0; i < processNames.length; i++) {
-    rawRules.push({
-      type: "PROCESS-NAME",
-      value: processNames[i],
-      target: RULE_TARGET_DIRECT,
-    });
-  }
-  return rawRules;
-}
-
 // 合并多组原生规则对象并保持稳定顺序。
 function mergeRawRuleGroups(rawRuleGroups) {
   var mergedRules = [];
@@ -513,24 +440,16 @@ var ALL_AI_DOMESTIC_DOMAINS = flattenGroupedDomains(DOMAINS_AI_DOMESTIC);
 // 展平后的域内办公软件域名列表，供 DNS 和规则注入复用。
 var ALL_OFFICE_DOMESTIC_DOMAINS = flattenGroupedDomains(DOMAINS_OFFICE_DOMESTIC);
 
-// Tailscale 控制面与 MagicDNS 域名，固定使用域外 DoH 解析。
-var ALL_TAILSCALE_DIRECT_DOMAINS = uniqueStrings(TAILSCALE_DIRECT_DOMAINS.slice());
+// 展平后的域外应用直连域名列表，供 DNS 和规则注入复用。
+var ALL_OVERSEAS_APP_DIRECT_DOMAINS = flattenGroupedDomains(
+  DOMAINS_APPS_OVERSEAS_DIRECT,
+);
 
-// 展平后的额外直连域名列表，供规则注入复用。
-var ALL_DIRECT_EXTRA_DOMAINS = ALL_TAILSCALE_DIRECT_DOMAINS.slice();
-
-// 需要直连的域名分组，按用途分类收拢输入。
-var DIRECT_DOMAIN_GROUPS = [
-  ALL_AI_DOMESTIC_DOMAINS,
-  ALL_OFFICE_DOMESTIC_DOMAINS,
-  ALL_DIRECT_EXTRA_DOMAINS,
-];
-
-// 需要直连的原生进程规则分组，按用途分类收拢输入。
-var DIRECT_PROCESS_RULE_GROUPS = [
-  TAILSCALE_DIRECT_PROCESS_RULES,
-  buildDirectProcessRules(PROCESS_NAMES_OFFICE_DOMESTIC_MACOS),
-];
+// 需要直连的域名分类，分别对应域内直连与域外应用直连。
+var DIRECT_DOMAIN_SOURCES = {
+  domestic: [ALL_AI_DOMESTIC_DOMAINS, ALL_OFFICE_DOMESTIC_DOMAINS],
+  overseasApps: [ALL_OVERSEAS_APP_DIRECT_DOMAINS],
+};
 
 // 链式代理出口测试与通用静态资源域名。
 var CHAIN_PROXY_SUPPORT_SUFFIXES = uniqueStrings([
@@ -560,16 +479,22 @@ var SNIFFER_SKIP_DOMAINS = uniqueStrings(
     "+.lan",
     "+.local",
     "+.localhost",
-  ].concat(ALL_DIRECT_EXTRA_DOMAINS),
+  ].concat(ALL_OVERSEAS_APP_DIRECT_DOMAINS),
 );
 
 // 统一收拢直连对象，作为冲突裁决和后续生成的单一来源。
-var ALL_DIRECT_DOMAIN_PATTERNS = mergeStringGroups(DIRECT_DOMAIN_GROUPS);
-var ALL_DIRECT_PROCESS_NAMES = extractRawRuleValues(
-  mergeRawRuleGroups(DIRECT_PROCESS_RULE_GROUPS),
-  "PROCESS-NAME",
+var ALL_DOMESTIC_DIRECT_DOMAIN_PATTERNS = mergeStringGroups(
+  DIRECT_DOMAIN_SOURCES.domestic,
 );
-var ALL_DIRECT_NETWORK_RULES = TAILSCALE_DIRECT_CIDR_RULES.slice();
+var ALL_OVERSEAS_APP_DIRECT_DOMAIN_PATTERNS = mergeStringGroups(
+  DIRECT_DOMAIN_SOURCES.overseasApps,
+);
+var ALL_DIRECT_DOMAIN_PATTERNS = mergeStringGroups([
+  ALL_DOMESTIC_DIRECT_DOMAIN_PATTERNS,
+  ALL_OVERSEAS_APP_DIRECT_DOMAIN_PATTERNS,
+]);
+var ALL_DIRECT_PROCESS_NAMES = [];
+var ALL_DIRECT_NETWORK_RULES = NETWORK_DIRECT_CIDR_RULES.slice();
 
 // 严格 AI 路由对象：AI 主服务、支撑平台与出口验证域名。
 var ALL_STRICT_AI_DOMAIN_PATTERNS = excludeStrings(
@@ -598,10 +523,7 @@ var ALL_NON_STRICT_CHAIN_DOMAIN_PATTERNS = excludeStrings(
 
 // 严格 AI 路由对象对应的进程集合。
 var ALL_STRICT_PROCESS_NAMES_BASE = excludeStrings(
-  mergeStringGroups([
-    PROCESS_NAMES_CHAIN_AI_MACOS,
-    PROCESS_NAMES_CHAIN_PLATFORM_MACOS,
-  ]),
+  PROCESS_NAMES_CHAIN_AI_MACOS,
   ALL_DIRECT_PROCESS_NAMES,
 );
 var ALL_BROWSER_CHAIN_PROCESS_NAMES = excludeStrings(
@@ -615,7 +537,7 @@ var ALL_STRICT_SNIFFER_FORCE_DOMAINS = mergeStringGroups([
 
 // 规则与 DNS/Sniffer 统一读取这几个总入口，避免各处分散引用。
 var ROUTING_DOMAIN_SOURCES = {
-  direct: DIRECT_DOMAIN_GROUPS,
+  direct: DIRECT_DOMAIN_SOURCES,
   strict: {
     ai: ALL_STRICT_AI_DOMAIN_PATTERNS,
     support: ALL_STRICT_SUPPORT_PLATFORM_DOMAIN_PATTERNS,
@@ -626,7 +548,6 @@ var ROUTING_DOMAIN_SOURCES = {
 };
 
 var ROUTING_PROCESS_SOURCES = {
-  directRules: DIRECT_PROCESS_RULE_GROUPS,
   strictBase: ALL_STRICT_PROCESS_NAMES_BASE,
   strictOptionalAiCli: PROCESS_NAMES_CHAIN_AI_CLI,
   generalBrowser: ALL_BROWSER_CHAIN_PROCESS_NAMES,
@@ -719,8 +640,12 @@ function buildNameserverPolicy() {
     DOH_OVERSEAS,
   );
   assignNameserverPolicyDomains(policy, ALL_APPLE_DOMAINS, DOH_DOMESTIC);
-  // Tailscale 控制面与 MagicDNS 域名固定使用域外 DoH，避免被域内解析污染。
-  assignNameserverPolicyDomains(policy, ALL_TAILSCALE_DIRECT_DOMAINS, DOH_OVERSEAS);
+  // 域外应用直连对象固定使用域外 DoH，避免被域内解析污染。
+  assignNameserverPolicyDomains(
+    policy,
+    ALL_OVERSEAS_APP_DIRECT_DOMAIN_PATTERNS,
+    DOH_OVERSEAS,
+  );
 
   // AI 服务与出口验证域名走域外 DoH。
   assignNameserverPolicyDomains(policy, ROUTING_DOMAIN_SOURCES.strict.ai, DOH_OVERSEAS);
@@ -797,8 +722,7 @@ function buildDnsFakeIpFilter() {
     .concat(ALL_APPLE_DOMAINS)
     .concat(gamingRealtimeDomains)
     .concat(stunRealtimeDomains)
-    .concat(homeRouterDomains)
-    .concat(ALL_DIRECT_EXTRA_DOMAINS);
+    .concat(homeRouterDomains);
 }
 
 // 构建 `fallback-filter` 使用的域名匹配列表。
@@ -806,6 +730,7 @@ function buildDnsFallbackFilterDomains() {
   return mergeStringGroups([
     ALL_STRICT_DOMAIN_PATTERNS,
     ALL_NON_STRICT_CHAIN_DOMAIN_PATTERNS,
+    ALL_OVERSEAS_APP_DIRECT_DOMAIN_PATTERNS,
   ]);
 }
 
@@ -1131,9 +1056,9 @@ function getRuleIdentity(ruleLine) {
 
 // 按固定优先级拼出直连保留项和链式代理两类管理规则。
 function buildManagedRules(strictAiTarget, chainGroupName) {
-  return buildDirectRules()
-    .concat(buildStrictChainRules(strictAiTarget))
-    .concat(buildGeneralChainRules(chainGroupName));
+  return buildStrictChainRules(strictAiTarget)
+    .concat(buildGeneralChainRules(chainGroupName))
+    .concat(buildDirectRules());
 }
 
 // 把规则数组转换成便于查询的规则标识表。
@@ -1332,12 +1257,14 @@ function buildGeneralChainRules(chainGroupName) {
   return ruleLines;
 }
 
-// 生成域内 AI、Tailscale 与其他本地保留项的 DIRECT 规则。
+// 生成域内直连、域外应用直连和网络地址直连规则。
 function buildDirectRules() {
   var ruleLines = [];
   var seenRuleIdentities = {};
   var directNetworkRules = [];
-  var directDomainGroups = ROUTING_DOMAIN_SOURCES.direct;
+  var directDomainGroups = ROUTING_DOMAIN_SOURCES.direct.domestic.concat(
+    ROUTING_DOMAIN_SOURCES.direct.overseasApps,
+  );
   var i;
 
   for (i = 0; i < ALL_DIRECT_NETWORK_RULES.length; i++) {
@@ -1349,11 +1276,7 @@ function buildDirectRules() {
     });
   }
 
-  addRawRulesIfNotExists(
-    ruleLines,
-    seenRuleIdentities,
-    mergeRawRuleGroups(ROUTING_PROCESS_SOURCES.directRules).concat(directNetworkRules),
-  );
+  addRawRulesIfNotExists(ruleLines, seenRuleIdentities, directNetworkRules);
   for (i = 0; i < directDomainGroups.length; i++) {
     addSuffixRulesIfNotExists(
       ruleLines,

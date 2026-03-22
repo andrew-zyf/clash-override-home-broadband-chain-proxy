@@ -6,7 +6,7 @@
 
 > 开源仓库：[github.com/andrew-zyf/clash-override-chain-proxy](https://github.com/andrew-zyf/clash-override-chain-proxy)
 >
-> 当前主脚本版本：`v8.5`
+> 当前主脚本版本：`v8.6`
 >
 > 当前 README 与进程规则按 **macOS / MacBook** 环境维护。
 
@@ -14,7 +14,7 @@
 
 - 你手动选择哪个 `chainRegion`，域外 AI 网站、服务、支撑平台和验证站点就强制走哪个地区的家宽出口
 - 如果当前 `chainRegion` 找不到可用跳板，或者关键规则没正确指向该出口，脚本直接报错，不静默回退
-- 域内 AI、域内办公软件系、Tailscale、Tailnet 地址段保持 `DIRECT`
+- 域内直连、域外应用直连、网络地址直连保持 `DIRECT`
 - DNS、Sniffer、规则三层使用同一套分类，不让 AI 主站和支撑平台在解析阶段先跑偏
 
 这份脚本不保证“永不封号”。它保证的是：不会因为这份覆写脚本自身的静默退化、规则冲突或配置遗漏，把你送到直连或错误地区。
@@ -29,10 +29,10 @@
 脚本在覆写阶段做六件事：
 
 1. 注入 MiyaIP 家宽出口与官方中转节点
-2. 先覆写 DNS，让域外 AI / 支撑平台走域外 DoH，Apple / 域内 AI / 域内办公软件系走域内 DoH
+2. 先覆写 DNS，让域外 AI / 支撑平台 / 域外应用直连走域外 DoH，Apple / 域内直连走域内 DoH
 3. 再覆写 Sniffer，让 AI 主站和支撑平台优先保留域名语义
 4. 解析当前 `chainRegion` 的跳板组和家宽出口组
-5. 注入并置顶 `DIRECT`、AI 强制家宽链式代理、普通链式代理三类规则
+5. 注入并置顶 AI 强制家宽链式代理、普通链式代理、三类 `DIRECT` 规则
 6. 校验关键规则是否真正写入当前 `chainRegion` 出口，若失败则报错
 
 ## 文件说明
@@ -100,8 +100,8 @@ var USER_OPTIONS = {
 
 - `chainRegion`：`US / JP / HK / SG`，决定域外 AI 和支撑平台当前从哪个地区的家宽出口出去
 - `manualNode`：手动指定跳板节点名；留空则自动匹配该地区可用节点或地区组
-- `enableBrowserProcessProxy`：默认 `false`，是否让浏览器整个进程走普通链式代理
-- `enableAiCliProcessProxy`：默认 `true`，是否让 `claude`、`opencode`、`gemini`、`codex` 走链式代理
+- `enableBrowserProcessProxy`：默认 `false`，是否让 `Comet`、`Dia`、`Atlas`、`Google Chrome` 及其 helper 走普通链式代理
+- `enableAiCliProcessProxy`：默认 `true`，是否让 `claude`、`gemini`、`codex` 走链式代理
 
 ### 5. 启用并验证
 
@@ -121,12 +121,12 @@ var USER_OPTIONS = {
 ## 分流一览
 
 - **域外 AI 与支撑平台**：直接命中当前 `chainRegion` 的家宽出口。包括 Claude、ChatGPT、Sora、Gemini、NotebookLM、Perplexity、OpenRouter、Grok / xAI，以及 Google、Microsoft、GitHub、VS Code 等登录、下载、IDE 相关平台
-- **AI CLI**：可选进入当前 `chainRegion` 的家宽出口，默认开启
-- **浏览器**：可选进入普通链式代理，默认不做整进程代理
+- **AI 进程管控**：只保留 AI App 与 AI CLI。当前默认覆盖 `Claude`、`ChatGPT`、`Perplexity`、`Cursor`，以及 `claude`、`gemini`、`codex`
+- **浏览器进程管控**：可选进入普通链式代理，默认关闭；当前只维护 `Comet`、`Dia`、`Atlas`、`Google Chrome` 及其明显 helper
 - **社交与流媒体**：走普通链式代理，跟随 `chainRegion`
-- **域内 AI**：固定 `DIRECT`
-- **域内办公软件系**：固定 `DIRECT`。当前默认覆盖腾讯、阿里、字节、WPS 的主力办公 / 沟通 / 协作产品，以及与这些产品直接相关的登录、静态、下载基础域；不会把这些公司全部域名整体放行
-- **Tailscale**：控制面域名、MagicDNS、Tailnet 地址段和常见 macOS 进程固定 `DIRECT`
+- **域内直连**：固定 `DIRECT`。包括域内 AI，以及腾讯、阿里、字节、WPS 的主力办公 / 沟通 / 协作产品相关域名
+- **域外应用直连**：固定 `DIRECT + DOH_OVERSEAS + skip-domain`。当前先实装 `Tailscale`；`Typeless` 预留到后续补充
+- **网络地址直连**：固定 `DIRECT`。当前主要是 Tailnet 地址段
 
 ## 本地校验
 
@@ -139,11 +139,12 @@ node tests/validate.js
 [`tests/validate.js`](tests/validate.js) 会检查：
 
 - 管理规则不重复
-- `DIRECT` 保护规则仍置顶
+- AI 严格链式代理规则优先于普通链式代理和 `DIRECT` 规则
 - 域外 AI 与支撑平台是否直接指向当前 `chainRegion` 出口
 - 浏览器和 AI CLI 开关是否只影响各自进程规则
-- 腾讯 / 阿里 / 字节 / WPS 是否各至少有关键域名和常见 macOS 进程命中 `DIRECT`
-- DNS `nameserver-policy`、`fallback-filter`、Sniffer 是否仍覆盖关键对象
+- 只有 AI 与浏览器服务保留进程管控，其它类别不再写 `PROCESS-NAME`
+- 域内直连、域外应用直连、网络地址直连是否仍命中预期规则
+- DNS `nameserver-policy`、`fallback-filter`、Sniffer 是否仍覆盖关键对象，且域外应用直连不会覆盖 AI 严格链式代理
 - 找不到可用地区跳板或 `manualNode` 无效时，是否直接报错
 
 ## 常见问题
@@ -152,7 +153,8 @@ node tests/validate.js
 - **出口不是住宅 IP**：优先检查 MiyaIP 凭证、账户余额和中转信息
 - **报错找不到可用地区跳板**：当前 `chainRegion` 在你的订阅里没有对应地区节点，或者节点命名无法被脚本识别；改 `chainRegion` 或填写 `manualNode`
 - **为什么浏览器默认不是整进程代理**：因为浏览器里有大量普通网站流量，默认把整个浏览器送入链式代理，副作用太大
-- **为什么把域内办公软件固定为 `DIRECT`**：因为它们服务的是国内办公 / 沟通 / 协作场景，目标和域外 AI 稳定画像不同；固定直连可以减少误走链式代理和 DNS 分类冲突
+- **为什么只保留 AI 和浏览器的进程管控**：因为它们最容易绕开纯域名分流，且最直接影响域外 AI 的出口一致性；其它类别进程规则过多，会增加误伤和维护成本
+- **为什么有“域外应用直连”**：像 Tailscale 这类对象需要 `DIRECT`，但 DNS 仍应固定走域外 DoH，避免因为解析落到国内或错误链路，暴露异常区域画像
 
 ## 兼容性
 

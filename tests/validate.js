@@ -11,27 +11,18 @@ const CHAIN_GROUP_NAME = "🇸🇬|新加坡-链式代理-家宽IP出口";
 const RELAY_GROUP_NAME = "🇸🇬|新加坡线路-链式代理-跳板";
 const LEGACY_GROUP_NAME = "AI 严格链式代理";
 
-const DEFAULT_DIRECT_RULE_PREFIX = [
-  "PROCESS-NAME,Tailscale,DIRECT",
-  "PROCESS-NAME,tailscale,DIRECT",
-  "PROCESS-NAME,tailscaled,DIRECT",
-  "PROCESS-NAME,IPNExtension,DIRECT",
-  "PROCESS-NAME,io.tailscale.ipn.macos.network-extension,DIRECT",
-  "PROCESS-NAME,io.tailscale.ipn.macsys.network-extension,DIRECT",
-  "PROCESS-NAME,WeChat,DIRECT",
-  "PROCESS-NAME,QQ,DIRECT",
-  "PROCESS-NAME,WeCom,DIRECT",
-  "PROCESS-NAME,TencentMeeting,DIRECT",
-  "PROCESS-NAME,DingTalk,DIRECT",
-  "PROCESS-NAME,AliyunDrive,DIRECT",
-  "PROCESS-NAME,Quark,DIRECT",
-  "PROCESS-NAME,Feishu,DIRECT",
-  "PROCESS-NAME,Lark,DIRECT",
-  "PROCESS-NAME,WPS Office,DIRECT",
-  "PROCESS-NAME,WPS,DIRECT",
-  "PROCESS-NAME,WPS Office Helper,DIRECT",
-  "IP-CIDR,100.64.0.0/10,DIRECT,no-resolve",
-  "IP-CIDR,100.100.100.100/32,DIRECT,no-resolve",
+const DEFAULT_RULE_PREFIX = [
+  "PROCESS-NAME,Claude," + CHAIN_GROUP_NAME,
+  "PROCESS-NAME,Claude Helper," + CHAIN_GROUP_NAME,
+  "PROCESS-NAME,ChatGPT," + CHAIN_GROUP_NAME,
+  "PROCESS-NAME,ChatGPT Helper," + CHAIN_GROUP_NAME,
+  "PROCESS-NAME,Perplexity," + CHAIN_GROUP_NAME,
+  "PROCESS-NAME,Perplexity Helper," + CHAIN_GROUP_NAME,
+  "PROCESS-NAME,Cursor," + CHAIN_GROUP_NAME,
+  "PROCESS-NAME,Cursor Helper," + CHAIN_GROUP_NAME,
+  "PROCESS-NAME,claude," + CHAIN_GROUP_NAME,
+  "PROCESS-NAME,gemini," + CHAIN_GROUP_NAME,
+  "PROCESS-NAME,codex," + CHAIN_GROUP_NAME,
 ];
 
 const DOMESTIC_OFFICE_DOMAINS = [
@@ -48,11 +39,13 @@ const DOMESTIC_OFFICE_DIRECT_RULES = [
   "DOMAIN-SUFFIX,wps.cn,DIRECT",
 ];
 
-const DOMESTIC_OFFICE_DIRECT_PROCESSES = [
-  "PROCESS-NAME,WeChat,DIRECT",
-  "PROCESS-NAME,DingTalk,DIRECT",
-  "PROCESS-NAME,Feishu,DIRECT",
-  "PROCESS-NAME,WPS Office,DIRECT",
+const OVERSEAS_APP_DIRECT_RULES = [
+  "DOMAIN-SUFFIX,tailscale.com,DIRECT",
+  "DOMAIN-SUFFIX,tailscale.io,DIRECT",
+  "DOMAIN-SUFFIX,ts.net,DIRECT",
+  "IP-CIDR,100.64.0.0/10,DIRECT,no-resolve",
+  "IP-CIDR,100.100.100.100/32,DIRECT,no-resolve",
+  "IP-CIDR6,fd7a:115c:a1e0::/48,DIRECT,no-resolve",
 ];
 
 function loadSandbox() {
@@ -128,15 +121,15 @@ function assertRuleMissing(ruleLines, ruleLine) {
   assert(!ruleLines.includes(ruleLine), "Unexpected rule found: " + ruleLine);
 }
 
-function assertRulePrefix(actualRules, expectedPrefix) {
-  const actualPrefix = Array.prototype.slice.call(actualRules, 0, expectedPrefix.length);
-  assert.strictEqual(JSON.stringify(actualPrefix), JSON.stringify(expectedPrefix));
-}
-
 function assertRulesExist(ruleLines, expectedRules) {
   for (const ruleLine of expectedRules) {
     assertRuleExists(ruleLines, ruleLine);
   }
+}
+
+function assertRulePrefix(actualRules, expectedPrefix) {
+  const actualPrefix = Array.prototype.slice.call(actualRules, 0, expectedPrefix.length);
+  assert.strictEqual(JSON.stringify(actualPrefix), JSON.stringify(expectedPrefix));
 }
 
 function assertProcessRules(output, enabled, processNames, target) {
@@ -155,29 +148,47 @@ function assertNameserverPolicyValue(output, domain, expectedValue) {
   assert.deepStrictEqual(output.dns["nameserver-policy"][domain], expectedValue);
 }
 
-function assertDomesticOfficeDirectCoverage(output, sandbox) {
-  assertRulesExist(output.rules, DOMESTIC_OFFICE_DIRECT_RULES);
-  assertRulesExist(output.rules, DOMESTIC_OFFICE_DIRECT_PROCESSES);
-
-  for (const domain of DOMESTIC_OFFICE_DOMAINS) {
-    assertNameserverPolicyValue(output, domain, sandbox.DOH_DOMESTIC);
-  }
-}
-
 function assertCoreStrictRouting(output) {
   assertRuleExists(output.rules, "DOMAIN-SUFFIX,claude.ai," + CHAIN_GROUP_NAME);
   assertRuleExists(output.rules, "DOMAIN-SUFFIX,google.com," + CHAIN_GROUP_NAME);
   assertRuleExists(output.rules, "DOMAIN-SUFFIX,youtube.com," + CHAIN_GROUP_NAME);
   assertRuleExists(output.rules, "PROCESS-NAME,Claude," + CHAIN_GROUP_NAME);
   assertRuleExists(output.rules, "PROCESS-NAME,claude," + CHAIN_GROUP_NAME);
-  assertRuleMissing(output.rules, "PROCESS-NAME,Arc," + CHAIN_GROUP_NAME);
+  assertRuleMissing(output.rules, "PROCESS-NAME,Comet," + CHAIN_GROUP_NAME);
   assertRuleMissing(output.rules, "DOMAIN-SUFFIX,claude.ai,DIRECT");
 }
 
-function assertDnsAndSniffer(output, sandbox) {
+function assertDomesticDirectCoverage(output, sandbox) {
+  assertRulesExist(output.rules, DOMESTIC_OFFICE_DIRECT_RULES);
+  assertRuleMissing(output.rules, "PROCESS-NAME,WeChat,DIRECT");
+  assertRuleMissing(output.rules, "PROCESS-NAME,DingTalk,DIRECT");
+  assertRuleMissing(output.rules, "PROCESS-NAME,Feishu,DIRECT");
+  assertRuleMissing(output.rules, "PROCESS-NAME,WPS Office,DIRECT");
+
+  for (const domain of DOMESTIC_OFFICE_DOMAINS) {
+    assertNameserverPolicyValue(output, domain, sandbox.DOH_DOMESTIC);
+  }
+}
+
+function assertOverseasAppDirectCoverage(output, sandbox) {
+  assertRulesExist(output.rules, OVERSEAS_APP_DIRECT_RULES);
+  assertRuleMissing(output.rules, "PROCESS-NAME,Tailscale,DIRECT");
+  assertRuleMissing(output.rules, "PROCESS-NAME,tailscale,DIRECT");
+  assertRuleMissing(output.rules, "PROCESS-NAME,IPNExtension,DIRECT");
+
   assertNameserverPolicyValue(output, "+.tailscale.com", sandbox.DOH_OVERSEAS);
   assertNameserverPolicyValue(output, "+.tailscale.io", sandbox.DOH_OVERSEAS);
   assertNameserverPolicyValue(output, "+.ts.net", sandbox.DOH_OVERSEAS);
+  assert(output.dns["fallback-filter"].domain.includes("+.tailscale.com"));
+  assert(output.dns["fallback-filter"].domain.includes("+.tailscale.io"));
+  assert(output.dns["fallback-filter"].domain.includes("+.ts.net"));
+  assert(output.sniffer["skip-domain"].includes("+.tailscale.com"));
+  assert(output.sniffer["skip-domain"].includes("+.tailscale.io"));
+  assert(output.sniffer["skip-domain"].includes("+.ts.net"));
+  assert(!output.dns["fake-ip-filter"].includes("+.tailscale.com"));
+}
+
+function assertDnsAndSniffer(output, sandbox) {
   assertNameserverPolicyValue(output, "+.sora.com", sandbox.DOH_OVERSEAS);
   assertNameserverPolicyValue(output, "+.notebooklm.google", sandbox.DOH_OVERSEAS);
   assertNameserverPolicyValue(output, "+.m365.cloud.microsoft", sandbox.DOH_OVERSEAS);
@@ -187,9 +198,6 @@ function assertDnsAndSniffer(output, sandbox) {
   assert(output.dns["fallback-filter"].domain.includes("+.youtube.com"));
   assert(output.sniffer["force-domain"].includes("+.claude.ai"));
   assert(output.sniffer["force-domain"].includes("+.google.com"));
-  assert(output.sniffer["skip-domain"].includes("+.tailscale.com"));
-  assert(output.sniffer["skip-domain"].includes("+.tailscale.io"));
-  assert(output.sniffer["skip-domain"].includes("+.ts.net"));
 }
 
 function testDefaultConfig() {
@@ -212,10 +220,11 @@ function testDefaultConfig() {
   assert(!findGroup(output, LEGACY_GROUP_NAME), "Legacy proxy group should be removed");
 
   assertCoreStrictRouting(output);
-  assertDomesticOfficeDirectCoverage(output, sandbox);
+  assertDomesticDirectCoverage(output, sandbox);
+  assertOverseasAppDirectCoverage(output, sandbox);
   assertDnsAndSniffer(output, sandbox);
   assertNoDuplicateRuleIdentities(output.rules.slice(0, 250));
-  assertRulePrefix(output.rules, DEFAULT_DIRECT_RULE_PREFIX);
+  assertRulePrefix(output.rules, DEFAULT_RULE_PREFIX);
 }
 
 function testEnableBrowserProcessProxy() {
@@ -223,12 +232,19 @@ function testEnableBrowserProcessProxy() {
     sandbox.USER_OPTIONS.enableBrowserProcessProxy = true;
   });
 
-  assertProcessRules(output, true, ["Arc", "Google Chrome", "Claude"], CHAIN_GROUP_NAME);
+  assertProcessRules(
+    output,
+    true,
+    ["Comet", "Dia", "Atlas", "Google Chrome"],
+    CHAIN_GROUP_NAME,
+  );
+  assertProcessRules(output, false, ["Arc", "Microsoft Edge"], CHAIN_GROUP_NAME);
 }
 
 function testAiCliProcessProxyDefaultsOn() {
   const { output } = runMain();
-  assertProcessRules(output, true, ["claude", "opencode", "gemini", "codex"], CHAIN_GROUP_NAME);
+  assertProcessRules(output, true, ["claude", "gemini", "codex"], CHAIN_GROUP_NAME);
+  assertProcessRules(output, false, ["opencode"], CHAIN_GROUP_NAME);
 }
 
 function testDisableAiCliProcessProxy() {
@@ -236,7 +252,15 @@ function testDisableAiCliProcessProxy() {
     sandbox.USER_OPTIONS.enableAiCliProcessProxy = false;
   });
 
-  assertProcessRules(output, false, ["claude", "opencode", "gemini", "codex"], CHAIN_GROUP_NAME);
+  assertProcessRules(output, false, ["claude", "gemini", "codex", "opencode"], CHAIN_GROUP_NAME);
+}
+
+function testOnlyAiAndBrowserProcessesAreManaged() {
+  const { output } = runMain();
+  assertRuleMissing(output.rules, "PROCESS-NAME,Google Drive," + CHAIN_GROUP_NAME);
+  assertRuleMissing(output.rules, "PROCESS-NAME,Visual Studio Code," + CHAIN_GROUP_NAME);
+  assertRuleMissing(output.rules, "PROCESS-NAME,WeChat,DIRECT");
+  assertRuleMissing(output.rules, "PROCESS-NAME,Tailscale,DIRECT");
 }
 
 function testMissingRegionFails() {
@@ -281,6 +305,7 @@ testDefaultConfig();
 testEnableBrowserProcessProxy();
 testAiCliProcessProxyDefaultsOn();
 testDisableAiCliProcessProxy();
+testOnlyAiAndBrowserProcessesAreManaged();
 testMissingRegionFails();
 testInvalidManualNodeFails();
 testMissingStrictTargetFails();
