@@ -22,21 +22,21 @@ const DEFAULT_RULE_PREFIX = [
   "PROCESS-NAME,Cursor Helper," + CHAIN_GROUP_NAME,
   "PROCESS-NAME,claude," + CHAIN_GROUP_NAME,
   "PROCESS-NAME,gemini," + CHAIN_GROUP_NAME,
-  "PROCESS-NAME,codex," + CHAIN_GROUP_NAME,
+  "PROCESS-NAME,codex," + CHAIN_GROUP_NAME
 ];
 
 const DOMESTIC_OFFICE_DOMAINS = [
   "+.docs.qq.com",
   "+.dingtalk.com",
   "+.feishu.cn",
-  "+.wps.cn",
+  "+.wps.cn"
 ];
 
 const DOMESTIC_OFFICE_DIRECT_RULES = [
   "DOMAIN-SUFFIX,docs.qq.com,DIRECT",
   "DOMAIN-SUFFIX,dingtalk.com,DIRECT",
   "DOMAIN-SUFFIX,feishu.cn,DIRECT",
-  "DOMAIN-SUFFIX,wps.cn,DIRECT",
+  "DOMAIN-SUFFIX,wps.cn,DIRECT"
 ];
 
 const OVERSEAS_APP_DIRECT_RULES = [
@@ -45,7 +45,7 @@ const OVERSEAS_APP_DIRECT_RULES = [
   "DOMAIN-SUFFIX,ts.net,DIRECT",
   "IP-CIDR,100.64.0.0/10,DIRECT,no-resolve",
   "IP-CIDR,100.100.100.100/32,DIRECT,no-resolve",
-  "IP-CIDR6,fd7a:115c:a1e0::/48,DIRECT,no-resolve",
+  "IP-CIDR6,fd7a:115c:a1e0::/48,DIRECT,no-resolve"
 ];
 
 function loadSandbox() {
@@ -54,7 +54,7 @@ function loadSandbox() {
     Object,
     Array,
     String,
-    Error,
+    Error
   };
   vm.createContext(sandbox);
   vm.runInContext(scriptCode, sandbox, { filename: scriptPath });
@@ -66,20 +66,20 @@ function createBaseConfig() {
     proxies: [
       { name: "🇸🇬 SG Auto 01", type: "ss" },
       { name: "🇭🇰 HK Auto 01", type: "ss" },
-      { name: "手动节点A", type: "ss" },
+      { name: "手动节点A", type: "ss" }
     ],
     "proxy-groups": [{ name: "节点选择", type: "select", proxies: ["🇸🇬 SG Auto 01"] }],
     rules: [
       "DOMAIN-SUFFIX,claude.ai,DIRECT",
       "DOMAIN-SUFFIX,tailscale.com,REJECT",
-      "MATCH,节点选择",
+      "MATCH,节点选择"
     ],
     _miya: {
       username: "user",
       password: "pass",
       relay: { server: "1.2.3.4", port: 8000 },
-      transit: { server: "transit.example.com", port: 8001 },
-    },
+      transit: { server: "transit.example.com", port: 8001 }
+    }
   };
 }
 
@@ -92,7 +92,7 @@ function runMain(configMutator, sandboxMutator) {
 
   return {
     sandbox,
-    output: sandbox.main(config),
+    output: sandbox.main(config)
   };
 }
 
@@ -205,7 +205,7 @@ function testDefaultConfig() {
     config["proxy-groups"].push({
       name: LEGACY_GROUP_NAME,
       type: "select",
-      proxies: ["错误旧组"],
+      proxies: ["错误旧组"]
     });
   });
 
@@ -213,7 +213,7 @@ function testDefaultConfig() {
   assert.strictEqual(output._miya, undefined);
   assert.strictEqual(
     output.proxies.find((proxy) => proxy.name === "自选节点 + 家宽IP")["dialer-proxy"],
-    RELAY_GROUP_NAME,
+    RELAY_GROUP_NAME
   );
 
   assert(findGroup(output, CHAIN_GROUP_NAME), "Expected chain group to exist");
@@ -236,7 +236,7 @@ function testEnableBrowserProcessProxy() {
     output,
     true,
     ["Comet", "Dia", "Atlas", "Google Chrome"],
-    CHAIN_GROUP_NAME,
+    CHAIN_GROUP_NAME
   );
   assertProcessRules(output, false, ["Arc", "Microsoft Edge"], CHAIN_GROUP_NAME);
 }
@@ -272,7 +272,7 @@ function testMissingRegionFails() {
 
   assert.throws(
     () => sandbox.main(config),
-    /未找到可用的 US 跳板节点或代理组/,
+    /未找到可用的 US 跳板节点或代理组/
   );
 }
 
@@ -282,7 +282,7 @@ function testInvalidManualNodeFails() {
 
   assert.throws(
     () => sandbox.main(createBaseConfig()),
-    /manualNode 未命中现有节点或代理组/,
+    /manualNode 未命中现有节点或代理组/
   );
 }
 
@@ -297,7 +297,7 @@ function testMissingStrictTargetFails() {
 
   assert.throws(
     () => sandbox.main(createBaseConfig()),
-    /域外 AI 与支撑平台未直接指向当前 chainRegion 出口/,
+    /域外 AI 与支撑平台未直接指向当前 chainRegion 出口/
   );
 }
 

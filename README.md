@@ -65,12 +65,12 @@ function main(config) {
     password: "你的密码",
     relay: {
       server: "12.34.56.78",
-      port: 8022,
+      port: 8022
     },
     transit: {
       server: "transit.miyaip.com",
-      port: 8001,
-    },
+      port: 8001
+    }
   };
   return config;
 }
@@ -94,7 +94,7 @@ var USER_OPTIONS = {
   chainRegion: "SG",
   manualNode: "",
   enableBrowserProcessProxy: false,
-  enableAiCliProcessProxy: true,
+  enableAiCliProcessProxy: true
 };
 ```
 

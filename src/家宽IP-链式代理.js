@@ -39,7 +39,7 @@ var USER_OPTIONS = {
   // 是否将浏览器主进程和 helper 进程一并纳入链式代理。
   enableBrowserProcessProxy: false,
   // 是否将常见 AI CLI 可执行文件纳入链式代理。
-  enableAiCliProcessProxy: true,
+  enableAiCliProcessProxy: true
 };
 
 // ---------------------------------------------------------------------------
@@ -51,20 +51,17 @@ var REGION_MAP = {
   US: { regex: /🇺🇸|美国|^US[\|丨\- ]/i, label: "美国", flag: "🇺🇸" },
   JP: { regex: /🇯🇵|日本|^JP[\|丨\- ]/i, label: "日本", flag: "🇯🇵" },
   HK: { regex: /🇭🇰|香港|^HK[\|丨\- ]/i, label: "香港", flag: "🇭🇰" },
-  SG: { regex: /🇸🇬|新加坡|^SG[\|丨\- ]/i, label: "新加坡", flag: "🇸🇬" },
+  SG: { regex: /🇸🇬|新加坡|^SG[\|丨\- ]/i, label: "新加坡", flag: "🇸🇬" }
 };
 
 // 脚本注入的两个 MiyaIP 节点名称。
 var NODE_NAMES = {
   relay: "自选节点 + 家宽IP",
-  transit: "MiyaIP（官方中转）",
+  transit: "MiyaIP（官方中转）"
 };
 
 // 自动匹配地区组时需要跳过的汇总代理组。
 var EXCLUDED_GROUPS = ["节点选择"];
-
-// 域名模式里使用的通配前缀。
-var DOMAIN_WILDCARD_PREFIX = "+.";
 
 // 直连规则统一使用的目标名称。
 var RULE_TARGET_DIRECT = "DIRECT";
@@ -81,7 +78,7 @@ var ERROR_PREFIX = "[家宽IP-链式代理] ";
 // 脚本生成的各类代理组名称后缀。
 var GROUP_NAME_SUFFIXES = {
   relay: "线路-链式代理-跳板",
-  chain: "-链式代理-家宽IP出口",
+  chain: "-链式代理-家宽IP出口"
 };
 
 // 兼容旧版本时需要清理的废弃代理组名称。
@@ -94,13 +91,13 @@ var LEGACY_PROXY_GROUP_NAMES = ["AI 严格链式代理"];
 // 域外服务优先使用的 DoH 服务器列表。
 var DOH_OVERSEAS = [
   "https://dns.google/dns-query",
-  "https://cloudflare-dns.com/dns-query",
+  "https://cloudflare-dns.com/dns-query"
 ];
 
 // 域内服务优先使用的 DoH 服务器列表。
 var DOH_DOMESTIC = [
   "https://dns.alidns.com/dns-query",
-  "https://doh.pub/dns-query",
+  "https://doh.pub/dns-query"
 ];
 
 // 主解析失败或命中过滤条件时使用的后备 DoH 列表。
@@ -113,9 +110,9 @@ var DOMAINS_APPLE = {
     "+.icloud-content.com",
     "+.mzstatic.com",
     "+.cdn-apple.com",
-    "+.aaplimg.com",
+    "+.aaplimg.com"
   ],
-  services: ["+.apple-cloudkit.com"],
+  services: ["+.apple-cloudkit.com"]
 };
 
 // 需要统一走链式代理的基础平台域名。
@@ -137,21 +134,21 @@ var DOMAINS_CHAIN_PLATFORM = {
     "+.m365.cloud.microsoft",
     "+.sharepoint.com",
     "+.onenote.com",
-    "+.onedrive.com",
+    "+.onedrive.com"
   ],
   microsoft_auth: [
     "+.microsoftonline.com",
     "+.msftauth.net",
     "+.msauth.net",
-    "+.msecnd.net",
+    "+.msecnd.net"
   ],
   // Microsoft 开发者与 VS Code 生态基础设施。
   microsoft_developer: [
     "+.visualstudio.com",
     "+.vsassets.io",
-    "+.vsmarketplacebadges.dev",
+    "+.vsmarketplacebadges.dev"
   ],
-  developer: ["+.github.com"],
+  developer: ["+.github.com"]
 };
 
 // 需要统一走链式代理的 AI 服务域名。
@@ -166,7 +163,7 @@ var DOMAINS_CHAIN_AI = {
     // Anthropic 站点静态资源经验域名，优先级低于主域名理解。
     "+.servd-anthropic-website.b-cdn.net",
     // Anthropic 官方场景使用过的短链。
-    "+.clau.de",
+    "+.clau.de"
   ],
 
   openai: [
@@ -175,7 +172,7 @@ var DOMAINS_CHAIN_AI = {
     "+.sora.com",
     // OpenAI 官方静态资源与内容分发基础设施。
     "+.oaiusercontent.com",
-    "+.oaistatic.com",
+    "+.oaistatic.com"
   ],
 
   google_ai: [
@@ -190,7 +187,7 @@ var DOMAINS_CHAIN_AI = {
     "+.deepmind.google",
     "+.labs.google",
     "+.antigravity.google",
-    "+.antigravity-ide.com",
+    "+.antigravity-ide.com"
   ],
 
   // `perplexitycdn.com` 为 Perplexity 资源分发域名。
@@ -198,7 +195,7 @@ var DOMAINS_CHAIN_AI = {
 
   router_and_tools: ["+.openrouter.ai"],
 
-  xai: ["+.x.ai", "+.grok.com", "+.console.x.ai", "+.api.x.ai"],
+  xai: ["+.x.ai", "+.grok.com", "+.console.x.ai", "+.api.x.ai"]
 };
 
 // 需要统一走链式代理的 macOS AI 服务 App / 进程名。
@@ -210,7 +207,7 @@ var PROCESS_NAMES_CHAIN_AI_MACOS = [
   "Perplexity",
   "Perplexity Helper",
   "Cursor",
-  "Cursor Helper",
+  "Cursor Helper"
 ];
 
 // 可选纳入链式代理的 AI CLI 可执行文件名，默认开启。
@@ -218,36 +215,18 @@ var PROCESS_NAMES_CHAIN_AI_CLI = ["claude", "gemini", "codex"];
 
 // 官方资料可直接确认的 macOS 浏览器主进程名。
 var PROCESS_NAMES_CHAIN_BROWSER_MACOS_CONFIRMED = [
-  "Comet",
-  "Dia",
-  "Atlas",
-  "Google Chrome",
+  "Comet", "Dia", "Atlas", "Google Chrome"
 ];
 
 // 基于 Chromium 进程命名模式推断的浏览器 helper 进程名。
 var PROCESS_NAMES_CHAIN_BROWSER_MACOS_CHROMIUM_INFERRED = [
-  "Comet Helper",
-  "Comet Helper (GPU)",
-  "Comet Helper (Plugin)",
-  "Comet Helper (Renderer)",
-  "Dia Helper",
-  "Dia Helper (GPU)",
-  "Dia Helper (Plugin)",
-  "Dia Helper (Renderer)",
-  "Google Chrome Helper",
-  "Google Chrome Helper (GPU)",
-  "Google Chrome Helper (Plugin)",
-  "Google Chrome Helper (Renderer)",
-  "Atlas Helper",
-  "Atlas Helper (GPU)",
-  "Atlas Helper (Plugin)",
-  "Atlas Helper (Renderer)",
+  "Comet Helper", "Dia Helper", "Google Chrome Helper", "Atlas Helper"
 ];
 
 // 需要统一走链式代理的 macOS 浏览器 App / 进程名。
 var PROCESS_NAMES_CHAIN_BROWSER_MACOS = mergeStringGroups([
   PROCESS_NAMES_CHAIN_BROWSER_MACOS_CONFIRMED,
-  PROCESS_NAMES_CHAIN_BROWSER_MACOS_CHROMIUM_INFERRED,
+  PROCESS_NAMES_CHAIN_BROWSER_MACOS_CHROMIUM_INFERRED
 ]);
 
 // 需要统一走链式代理的流媒体和域外社交域名。
@@ -257,7 +236,7 @@ var DOMAINS_CHAIN_MEDIA = {
     "+.googlevideo.com",
     "+.ytimg.com",
     "+.youtube-nocookie.com",
-    "+.yt.be",
+    "+.yt.be"
   ],
   netflix: [
     "+.netflix.com",
@@ -266,7 +245,7 @@ var DOMAINS_CHAIN_MEDIA = {
     "+.nflxso.net",
     "+.nflximg.net",
     "+.nflximg.com",
-    "+.nflxext.com",
+    "+.nflxext.com"
   ],
   twitter: ["+.twitter.com", "+.x.com", "+.twimg.com", "+.t.co"],
   facebook: [
@@ -275,7 +254,7 @@ var DOMAINS_CHAIN_MEDIA = {
     "+.fb.com",
     "+.facebook.net",
     "+.instagram.com",
-    "+.cdninstagram.com",
+    "+.cdninstagram.com"
   ],
   telegram: ["+.telegram.org", "+.t.me", "+.telegra.ph", "+.telesco.pe"],
   discord: [
@@ -283,8 +262,8 @@ var DOMAINS_CHAIN_MEDIA = {
     "+.discord.gg",
     "+.discordapp.com",
     "+.discordapp.net",
-    "+.discord.media",
-  ],
+    "+.discord.media"
+  ]
 };
 
 // 网络边界相对明确、适合稳定直连的域内 AI 域名。
@@ -292,11 +271,11 @@ var DOMAINS_AI_DOMESTIC = {
   tongyi: [
     "+.tongyi.aliyun.com",
     "+.qianwen.aliyun.com",
-    "+.dashscope.aliyuncs.com",
+    "+.dashscope.aliyuncs.com"
   ],
   moonshot: ["+.moonshot.cn"],
   zhipu: ["+.chatglm.cn", "+.zhipuai.cn", "+.bigmodel.cn"],
-  siliconflow: ["+.siliconflow.cn"],
+  siliconflow: ["+.siliconflow.cn"]
 };
 
 // 域内办公软件与协作平台域名，固定保持 DIRECT。
@@ -310,7 +289,7 @@ var DOMAINS_OFFICE_DOMESTIC = {
     "+.docs.qq.com",
     "+.meeting.tencent.com",
     "+.tencentcloud.com",
-    "+.cloud.tencent.com",
+    "+.cloud.tencent.com"
   ],
   alibaba_productivity: [
     "+.dingtalk.com",
@@ -320,33 +299,31 @@ var DOMAINS_OFFICE_DOMESTIC = {
     "+.teambition.com",
     "+.aliyun.com",
     "+.aliyuncs.com",
-    "+.alibabacloud.com",
+    "+.alibabacloud.com"
   ],
   bytedance_productivity: [
     "+.feishu.cn",
     "+.feishu.net",
     "+.feishucdn.com",
     "+.larksuite.com",
-    "+.larkoffice.com",
+    "+.larkoffice.com"
   ],
   wps_productivity: [
-    "+.wps.cn",
-    "+.wps.com",
-    "+.kdocs.cn",
-    "+.kdocs.com",
-  ],
+    "+.wps.cn", "+.wps.com", "+.kdocs.cn", "+.kdocs.com"
+  ]
 };
 
 // 域外应用直连域名，当前先实装 Tailscale；Typeless 预留到后续补充。
 var DOMAINS_APPS_OVERSEAS_DIRECT = {
   tailscale: ["+.tailscale.com", "+.tailscale.io", "+.ts.net"],
+  typeless: ["+.typeless.com"]
 };
 
 // 网络地址直连，当前主要用于 Tailnet 地址段。
 var NETWORK_DIRECT_CIDR_RULES = [
   { type: "IP-CIDR", value: "100.64.0.0/10", target: RULE_TARGET_DIRECT },
   { type: "IP-CIDR", value: "100.100.100.100/32", target: RULE_TARGET_DIRECT },
-  { type: "IP-CIDR6", value: "fd7a:115c:a1e0::/48", target: RULE_TARGET_DIRECT },
+  { type: "IP-CIDR6", value: "fd7a:115c:a1e0::/48", target: RULE_TARGET_DIRECT }
 ];
 
 // ---------------------------------------------------------------------------
@@ -442,26 +419,25 @@ var ALL_OFFICE_DOMESTIC_DOMAINS = flattenGroupedDomains(DOMAINS_OFFICE_DOMESTIC)
 
 // 展平后的域外应用直连域名列表，供 DNS 和规则注入复用。
 var ALL_OVERSEAS_APP_DIRECT_DOMAINS = flattenGroupedDomains(
-  DOMAINS_APPS_OVERSEAS_DIRECT,
+  DOMAINS_APPS_OVERSEAS_DIRECT
 );
 
 // 需要直连的域名分类，分别对应域内直连与域外应用直连。
 var DIRECT_DOMAIN_SOURCES = {
   domestic: [ALL_AI_DOMESTIC_DOMAINS, ALL_OFFICE_DOMESTIC_DOMAINS],
-  overseasApps: [ALL_OVERSEAS_APP_DIRECT_DOMAINS],
+  overseasApps: [ALL_OVERSEAS_APP_DIRECT_DOMAINS]
 };
 
 // DNS `fallback-filter` 额外补充的域名模式。
 var DNS_FALLBACK_EXTRA_DOMAINS = uniqueStrings([
   "+.cdn.cloudflare.net",
-  "ping0.cc",
-  "ipinfo.io",
+  "ping0.cc", "ipinfo.io"
 ]);
 
 // Sniffer 强制保留域名语义的域名模式。
 var SNIFFER_FORCE_DOMAINS = uniqueStrings([
   "+.cloudflare.com",
-  "+.cdn.cloudflare.net",
+  "+.cdn.cloudflare.net"
 ]);
 
 // Sniffer 应跳过的直连和本地域名模式。
@@ -471,20 +447,20 @@ var SNIFFER_SKIP_DOMAINS = uniqueStrings(
     "+.apple.com",
     "+.lan",
     "+.local",
-    "+.localhost",
-  ].concat(ALL_OVERSEAS_APP_DIRECT_DOMAINS),
+    "+.localhost"
+  ].concat(ALL_OVERSEAS_APP_DIRECT_DOMAINS)
 );
 
 // 统一收拢直连对象，作为冲突裁决和后续生成的单一来源。
 var ALL_DOMESTIC_DIRECT_DOMAIN_PATTERNS = mergeStringGroups(
-  DIRECT_DOMAIN_SOURCES.domestic,
+  DIRECT_DOMAIN_SOURCES.domestic
 );
 var ALL_OVERSEAS_APP_DIRECT_DOMAIN_PATTERNS = mergeStringGroups(
-  DIRECT_DOMAIN_SOURCES.overseasApps,
+  DIRECT_DOMAIN_SOURCES.overseasApps
 );
 var ALL_DIRECT_DOMAIN_PATTERNS = mergeStringGroups([
   ALL_DOMESTIC_DIRECT_DOMAIN_PATTERNS,
-  ALL_OVERSEAS_APP_DIRECT_DOMAIN_PATTERNS,
+  ALL_OVERSEAS_APP_DIRECT_DOMAIN_PATTERNS
 ]);
 var ALL_DIRECT_PROCESS_NAMES = [];
 var ALL_DIRECT_NETWORK_RULES = NETWORK_DIRECT_CIDR_RULES.slice();
@@ -492,40 +468,40 @@ var ALL_DIRECT_NETWORK_RULES = NETWORK_DIRECT_CIDR_RULES.slice();
 // 严格 AI 路由对象：AI 主服务、支撑平台与出口验证域名。
 var ALL_STRICT_AI_DOMAIN_PATTERNS = excludeStrings(
   ALL_CHAIN_AI_DOMAINS,
-  ALL_DIRECT_DOMAIN_PATTERNS,
+  ALL_DIRECT_DOMAIN_PATTERNS
 );
 var ALL_STRICT_SUPPORT_PLATFORM_DOMAIN_PATTERNS = excludeStrings(
   ALL_CHAIN_PLATFORM_DOMAINS,
-  ALL_DIRECT_DOMAIN_PATTERNS,
+  ALL_DIRECT_DOMAIN_PATTERNS
 );
 var ALL_STRICT_VALIDATION_DOMAIN_PATTERNS = excludeStrings(
   DNS_FALLBACK_EXTRA_DOMAINS,
-  ALL_DIRECT_DOMAIN_PATTERNS,
+  ALL_DIRECT_DOMAIN_PATTERNS
 );
 var ALL_STRICT_DOMAIN_PATTERNS = mergeStringGroups([
   ALL_STRICT_AI_DOMAIN_PATTERNS,
   ALL_STRICT_SUPPORT_PLATFORM_DOMAIN_PATTERNS,
-  ALL_STRICT_VALIDATION_DOMAIN_PATTERNS,
+  ALL_STRICT_VALIDATION_DOMAIN_PATTERNS
 ]);
 
 // 非严格链式代理对象保持原有行为，当前只保留媒体和社交。
 var ALL_NON_STRICT_CHAIN_DOMAIN_PATTERNS = excludeStrings(
   ALL_CHAIN_MEDIA_DOMAINS,
-  ALL_DIRECT_DOMAIN_PATTERNS,
+  ALL_DIRECT_DOMAIN_PATTERNS
 );
 
 // 严格 AI 路由对象对应的进程集合。
 var ALL_STRICT_PROCESS_NAMES_BASE = excludeStrings(
   PROCESS_NAMES_CHAIN_AI_MACOS,
-  ALL_DIRECT_PROCESS_NAMES,
+  ALL_DIRECT_PROCESS_NAMES
 );
 var ALL_BROWSER_CHAIN_PROCESS_NAMES = excludeStrings(
   PROCESS_NAMES_CHAIN_BROWSER_MACOS,
-  ALL_DIRECT_PROCESS_NAMES,
+  ALL_DIRECT_PROCESS_NAMES
 );
 var ALL_STRICT_SNIFFER_FORCE_DOMAINS = mergeStringGroups([
   SNIFFER_FORCE_DOMAINS,
-  ALL_STRICT_DOMAIN_PATTERNS,
+  ALL_STRICT_DOMAIN_PATTERNS
 ]);
 
 // 规则与 DNS/Sniffer 统一读取这几个总入口，避免各处分散引用。
@@ -535,21 +511,21 @@ var ROUTING_DOMAIN_SOURCES = {
     ai: ALL_STRICT_AI_DOMAIN_PATTERNS,
     support: ALL_STRICT_SUPPORT_PLATFORM_DOMAIN_PATTERNS,
     validation: ALL_STRICT_VALIDATION_DOMAIN_PATTERNS,
-    all: ALL_STRICT_DOMAIN_PATTERNS,
+    all: ALL_STRICT_DOMAIN_PATTERNS
   },
-  generalChain: ALL_NON_STRICT_CHAIN_DOMAIN_PATTERNS,
+  generalChain: ALL_NON_STRICT_CHAIN_DOMAIN_PATTERNS
 };
 
 var ROUTING_PROCESS_SOURCES = {
   strictBase: ALL_STRICT_PROCESS_NAMES_BASE,
   strictOptionalAiCli: PROCESS_NAMES_CHAIN_AI_CLI,
-  generalBrowser: ALL_BROWSER_CHAIN_PROCESS_NAMES,
+  generalBrowser: ALL_BROWSER_CHAIN_PROCESS_NAMES
 };
 
 var MANAGED_RULE_ASSERTIONS = [
   { type: "DOMAIN-SUFFIX", value: "claude.ai" },
   { type: "DOMAIN-SUFFIX", value: "google.com" },
-  { type: "PROCESS-NAME", value: "Claude" },
+  { type: "PROCESS-NAME", value: "Claude" }
 ];
 
 // ---------------------------------------------------------------------------
@@ -582,21 +558,21 @@ function assignNameserverPolicyDomains(policy, domains, dohServers) {
 // 构建不同域名分类对应的 `nameserver-policy` 映射。
 function buildNameserverPolicy() {
   var policy = {
-    "geosite:openai": DOH_OVERSEAS,
+    "geosite:openai": DOH_OVERSEAS
   };
 
   // 严格 AI 域名与支撑平台走域外 DoH，Apple 走域内 DoH。
   assignNameserverPolicyDomains(
     policy,
     ROUTING_DOMAIN_SOURCES.strict.support,
-    DOH_OVERSEAS,
+    DOH_OVERSEAS
   );
   assignNameserverPolicyDomains(policy, ALL_APPLE_DOMAINS, DOH_DOMESTIC);
   // 域外应用直连对象固定使用域外 DoH，避免被域内解析污染。
   assignNameserverPolicyDomains(
     policy,
     ALL_OVERSEAS_APP_DIRECT_DOMAIN_PATTERNS,
-    DOH_OVERSEAS,
+    DOH_OVERSEAS
   );
 
   // AI 服务与出口验证域名走域外 DoH。
@@ -604,7 +580,7 @@ function buildNameserverPolicy() {
   assignNameserverPolicyDomains(
     policy,
     ROUTING_DOMAIN_SOURCES.strict.validation,
-    DOH_OVERSEAS,
+    DOH_OVERSEAS
   );
   // 域内 AI 走域内 DoH。
   assignNameserverPolicyDomains(policy, ALL_AI_DOMESTIC_DOMAINS, DOH_DOMESTIC);
@@ -614,7 +590,7 @@ function buildNameserverPolicy() {
   assignNameserverPolicyDomains(
     policy,
     ROUTING_DOMAIN_SOURCES.generalChain,
-    DOH_OVERSEAS,
+    DOH_OVERSEAS
   );
 
   return policy;
@@ -626,7 +602,7 @@ function buildDnsFakeIpFilter() {
     "*.lan",
     "*.local",
     "*.localhost",
-    "localhost.ptlogin2.qq.com",
+    "localhost.ptlogin2.qq.com"
   ];
   var timeSyncDomains = [
     "time.*.com",
@@ -638,13 +614,13 @@ function buildDnsFakeIpFilter() {
     "ntp.*.com",
     "ntp1.aliyun.com",
     "pool.ntp.org",
-    "*.pool.ntp.org",
+    "*.pool.ntp.org"
   ];
   var connectivityTestDomains = [
     "www.msftconnecttest.com",
     "www.msftncsi.com",
     "*.msftconnecttest.com",
-    "*.msftncsi.com",
+    "*.msftncsi.com"
   ];
   // 游戏主机联机和游戏平台入口通常依赖真实 IP。
   var gamingRealtimeDomains = [
@@ -653,19 +629,19 @@ function buildDnsFakeIpFilter() {
     "xbox.*.microsoft.com",
     "+.xboxlive.com",
     "*.battlenet.com.cn",
-    "*.blzstatic.cn",
+    "*.blzstatic.cn"
   ];
   // 通用 STUN 域名常见于 WebRTC、语音和点对点实时连接。
   var stunRealtimeDomains = [
     "stun.*.*",
-    "stun.*.*.*",
+    "stun.*.*.*"
   ];
   // 本地路由器和家庭网络设备入口应直接返回真实 IP。
   var homeRouterDomains = [
     "+.router.asus.com",
     "+.linksys.com",
     "+.tplinkwifi.net",
-    "*.xiaoqiang.net",
+    "*.xiaoqiang.net"
   ];
 
   return localNetworkDomains
@@ -682,7 +658,7 @@ function buildDnsFallbackFilterDomains() {
   return mergeStringGroups([
     ALL_STRICT_DOMAIN_PATTERNS,
     ALL_NON_STRICT_CHAIN_DOMAIN_PATTERNS,
-    ALL_OVERSEAS_APP_DIRECT_DOMAIN_PATTERNS,
+    ALL_OVERSEAS_APP_DIRECT_DOMAIN_PATTERNS
   ]);
 }
 
@@ -693,7 +669,7 @@ function buildDnsFallbackFilter() {
     "geoip-code": "CN",
     geosite: ["gfw"],
     ipcidr: ["240.0.0.0/4", "0.0.0.0/32"],
-    domain: buildDnsFallbackFilterDomains(),
+    domain: buildDnsFallbackFilterDomains()
   };
 }
 
@@ -711,7 +687,7 @@ function buildDnsBaseConfig() {
     "proxy-server-nameserver": DOH_DOMESTIC,
     "direct-nameserver": DOH_DOMESTIC.slice(),
     "direct-nameserver-follow-policy": true,
-    fallback: DOH_FALLBACK,
+    fallback: DOH_FALLBACK
   };
 }
 
@@ -733,10 +709,10 @@ function buildSnifferConfig() {
     sniff: {
       TLS: { ports: [443, 8443] },
       HTTP: { ports: [80, 8080, 8880], "override-destination": true },
-      QUIC: { ports: [443] },
+      QUIC: { ports: [443] }
     },
     "force-domain": ALL_STRICT_SNIFFER_FORCE_DOMAINS,
-    "skip-domain": SNIFFER_SKIP_DOMAINS,
+    "skip-domain": SNIFFER_SKIP_DOMAINS
   };
 }
 
@@ -778,7 +754,7 @@ function buildMiyaProxy(miyaCredentials, proxyName, endpoint) {
     port: endpoint.port,
     username: miyaCredentials.username,
     password: miyaCredentials.password,
-    udp: true,
+    udp: true
   };
 }
 
@@ -859,7 +835,7 @@ function addRegionUrlTestGroup(proxyGroups, groupName, regionNodeNames) {
     proxies: regionNodeNames,
     url: URL_TEST_PROBE_URL,
     interval: 300,
-    tolerance: 50,
+    tolerance: 50
   });
 }
 
@@ -870,8 +846,8 @@ function injectMiyaProxies(config, miyaCredentials) {
     buildMiyaProxy(
       miyaCredentials,
       NODE_NAMES.transit,
-      miyaCredentials.transit,
-    ),
+      miyaCredentials.transit
+    )
   ];
 
   for (var i = 0; i < miyaProxies.length; i++) {
@@ -895,7 +871,7 @@ function ensureRegionGroup(config, region, groupNameSuffix, reuseExisting) {
   if (reuseExisting) {
     var reusableGroupName = findReusableRegionGroupName(
       proxyGroups,
-      regionRegex,
+      regionRegex
     );
     if (reusableGroupName) return reusableGroupName;
   }
@@ -921,7 +897,7 @@ function resolveRelayTarget(config, region, manualNode) {
       throw createUserError(
         "manualNode 未命中现有节点或代理组: " +
           relayTarget +
-          "，请改成 Clash Party 中实际存在的节点名或留空自动选择",
+          "，请改成 Clash Party 中实际存在的节点名或留空自动选择"
       );
     }
     return relayTarget;
@@ -932,7 +908,7 @@ function resolveRelayTarget(config, region, manualNode) {
     throw createUserError(
       "未找到可用的 " +
         region +
-        " 跳板节点或代理组，请检查 chainRegion 是否与订阅地区一致，或显式填写 manualNode",
+        " 跳板节点或代理组，请检查 chainRegion 是否与订阅地区一致，或显式填写 manualNode"
     );
   }
   return relayTarget;
@@ -956,14 +932,14 @@ function ensureChainGroup(config, region) {
   var regionMeta = resolveRegionMeta(region, true);
   var chainGroupName = buildRegionGroupName(
     regionMeta,
-    GROUP_NAME_SUFFIXES.chain,
+    GROUP_NAME_SUFFIXES.chain
   );
 
   if (!findProxyGroupByName(config["proxy-groups"], chainGroupName)) {
     config["proxy-groups"].push({
       name: chainGroupName,
       type: "select",
-      proxies: [NODE_NAMES.transit, NODE_NAMES.relay],
+      proxies: [NODE_NAMES.transit, NODE_NAMES.relay]
     });
   }
 
@@ -977,7 +953,7 @@ function resolveRoutingTargets(config, region, manualNode) {
   return {
     relayTarget: relayTarget,
     chainGroupName: chainGroupName,
-    strictAiTarget: chainGroupName,
+    strictAiTarget: chainGroupName
   };
 }
 
@@ -987,7 +963,7 @@ function applyManagedRouting(config, routingTargets) {
   injectManagedRules(
     config,
     routingTargets.strictAiTarget,
-    routingTargets.chainGroupName,
+    routingTargets.chainGroupName
   );
 }
 
@@ -1046,7 +1022,7 @@ function prependRules(targetRules, rulesToPrepend) {
 function injectManagedRules(
   config,
   strictAiTarget,
-  chainGroupName,
+  chainGroupName
 ) {
   var managedRules = buildManagedRules(strictAiTarget, chainGroupName);
   var managedRuleIdentities = buildRuleIdentityLookup(managedRules);
@@ -1061,7 +1037,7 @@ function addRuleIfNotExists(
   seenRuleIdentities,
   type,
   value,
-  target,
+  target
 ) {
   var ruleIdentity = type + "," + value;
   if (seenRuleIdentities[ruleIdentity]) return;
@@ -1089,7 +1065,7 @@ function addTypedRulesIfNotExists(
   seenRuleIdentities,
   values,
   ruleType,
-  target,
+  target
 ) {
   for (var i = 0; i < values.length; i++) {
     addRuleIfNotExists(
@@ -1097,7 +1073,7 @@ function addTypedRulesIfNotExists(
       seenRuleIdentities,
       ruleType,
       values[i],
-      target,
+      target
     );
   }
 }
@@ -1107,7 +1083,7 @@ function addSuffixRulesIfNotExists(
   ruleLines,
   seenRuleIdentities,
   domains,
-  target,
+  target
 ) {
   var suffixes = [];
   for (var i = 0; i < domains.length; i++) {
@@ -1118,7 +1094,7 @@ function addSuffixRulesIfNotExists(
     seenRuleIdentities,
     suffixes,
     "DOMAIN-SUFFIX",
-    target,
+    target
   );
 }
 
@@ -1127,14 +1103,14 @@ function addProcessRulesIfNotExists(
   ruleLines,
   seenRuleIdentities,
   processNames,
-  target,
+  target
 ) {
   addTypedRulesIfNotExists(
     ruleLines,
     seenRuleIdentities,
     processNames,
     "PROCESS-NAME",
-    target,
+    target
   );
 }
 
@@ -1145,8 +1121,8 @@ function buildStrictProcessGroups() {
     processGroups.push(
       excludeStrings(
         ROUTING_PROCESS_SOURCES.strictOptionalAiCli,
-        ALL_DIRECT_PROCESS_NAMES,
-      ),
+        ALL_DIRECT_PROCESS_NAMES
+      )
     );
   }
   return processGroups;
@@ -1170,7 +1146,7 @@ function buildStrictChainRules(strictAiTarget) {
       ruleLines,
       seenRuleIdentities,
       processGroups[i],
-      strictAiTarget,
+      strictAiTarget
     );
   }
 
@@ -1178,7 +1154,7 @@ function buildStrictChainRules(strictAiTarget) {
     ruleLines,
     seenRuleIdentities,
     ROUTING_DOMAIN_SOURCES.strict.all,
-    strictAiTarget,
+    strictAiTarget
   );
   return ruleLines;
 }
@@ -1195,7 +1171,7 @@ function buildGeneralChainRules(chainGroupName) {
       ruleLines,
       seenRuleIdentities,
       processGroups[i],
-      chainGroupName,
+      chainGroupName
     );
   }
 
@@ -1203,7 +1179,7 @@ function buildGeneralChainRules(chainGroupName) {
     ruleLines,
     seenRuleIdentities,
     ROUTING_DOMAIN_SOURCES.generalChain,
-    chainGroupName,
+    chainGroupName
   );
 
   return ruleLines;
@@ -1215,7 +1191,7 @@ function buildDirectRules() {
   var seenRuleIdentities = {};
   var directNetworkRules = [];
   var directDomainGroups = ROUTING_DOMAIN_SOURCES.direct.domestic.concat(
-    ROUTING_DOMAIN_SOURCES.direct.overseasApps,
+    ROUTING_DOMAIN_SOURCES.direct.overseasApps
   );
   var i;
 
@@ -1224,7 +1200,7 @@ function buildDirectRules() {
       type: ALL_DIRECT_NETWORK_RULES[i].type,
       value: ALL_DIRECT_NETWORK_RULES[i].value,
       target: ALL_DIRECT_NETWORK_RULES[i].target,
-      option: "no-resolve",
+      option: "no-resolve"
     });
   }
 
@@ -1234,7 +1210,7 @@ function buildDirectRules() {
       ruleLines,
       seenRuleIdentities,
       directDomainGroups[i],
-      RULE_TARGET_DIRECT,
+      RULE_TARGET_DIRECT
     );
   }
   return ruleLines;
@@ -1245,7 +1221,7 @@ function assertManagedRuleTarget(ruleLines, type, value, target) {
   var ruleLine = type + "," + value + "," + target;
   if (ruleLines.indexOf(ruleLine) >= 0) return;
   throw createUserError(
-    "关键规则未正确写入: " + ruleLine + "，请检查 chainRegion、manualNode 和订阅代理组",
+    "关键规则未正确写入: " + ruleLine + "，请检查 chainRegion、manualNode 和订阅代理组"
   );
 }
 
@@ -1258,14 +1234,14 @@ function validateManagedRouting(config, routingTargets) {
       throw createUserError(
         "遗留旧版代理组未被清理: " +
           LEGACY_PROXY_GROUP_NAMES[i] +
-          "，请检查当前覆写脚本是否仍在重复注入旧规则",
+          "，请检查当前覆写脚本是否仍在重复注入旧规则"
       );
     }
   }
 
   if (routingTargets.strictAiTarget !== routingTargets.chainGroupName) {
     throw createUserError(
-      "域外 AI 与支撑平台未直接指向当前 chainRegion 出口，请检查 chainRegion 或代理组注入逻辑",
+      "域外 AI 与支撑平台未直接指向当前 chainRegion 出口，请检查 chainRegion 或代理组注入逻辑"
     );
   }
 
@@ -1274,7 +1250,7 @@ function validateManagedRouting(config, routingTargets) {
       config.rules,
       MANAGED_RULE_ASSERTIONS[i].type,
       MANAGED_RULE_ASSERTIONS[i].value,
-      routingTargets.strictAiTarget,
+      routingTargets.strictAiTarget
     );
   }
 }
@@ -1285,14 +1261,14 @@ function validateManagedRouting(config, routingTargets) {
 
 // 把带通配前缀的域名模式转换成规则使用的裸域名后缀。
 function toSuffix(domainPattern) {
-  return domainPattern.replace(DOMAIN_WILDCARD_PREFIX, "");
+  return domainPattern.replace("+.", "");
 }
 
 // 读取并移除注入到 `config._miya` 的 MiyaIP 凭证。
 function takeMiyaCredentials(config) {
   if (!config._miya) {
     throw createUserError(
-      "缺少 config._miya，请确保 MiyaIP 凭证.js 已启用且排序在本脚本之前",
+      "缺少 config._miya，请确保 MiyaIP 凭证.js 已启用且排序在本脚本之前"
     );
   }
   var miyaCredentials = config._miya;
@@ -1312,7 +1288,7 @@ function main(config) {
   routingTargets = resolveRoutingTargets(
     config,
     USER_OPTIONS.chainRegion,
-    USER_OPTIONS.manualNode,
+    USER_OPTIONS.manualNode
   );
   applyManagedRouting(config, routingTargets);
   validateManagedRouting(config, routingTargets);
