@@ -22,7 +22,7 @@
  * - 使用 ES5 语法，不依赖箭头函数、解构赋值、模板字符串、
  *   展开语法、`Object.values()`、`Object.fromEntries()` 等 ES6+ 特性。
  *
- * @version 8.9
+ * @version 8.11
  */
 
 // ---------------------------------------------------------------------------
@@ -344,7 +344,7 @@ var SOURCE_PROCESSES = {
     aiCli: ["claude", "gemini", "codex"],
     browser: {
       apps: [
-        // "Comet",
+        // "Comet", // 不走链式代理
         "Dia",
         "Atlas",
         "Google Chrome",
@@ -884,6 +884,34 @@ function upsertRegionUrlTestGroup(proxyGroups, groupName, regionNodeNames) {
   });
 }
 
+// 把当前地区的链式代理跳板组同步进 `节点选择`，并剔除旧地区跳板。
+function syncRelayGroupIntoNodeSelection(config, relayGroupName) {
+  var nodeSelectionGroup = findProxyGroupByName(config["proxy-groups"], "节点选择");
+  if (!nodeSelectionGroup || !nodeSelectionGroup.proxies) return;
+
+  var nextProxyNames = [];
+  var relaySuffix = BASE.groupNameSuffixes.relay;
+  var i;
+  var proxyName;
+  var relaySuffixIndex;
+
+  for (i = 0; i < nodeSelectionGroup.proxies.length; i++) {
+    proxyName = nodeSelectionGroup.proxies[i];
+    relaySuffixIndex = proxyName.lastIndexOf(relaySuffix);
+    if (proxyName === relayGroupName) continue;
+    if (
+      relaySuffixIndex >= 0 &&
+      relaySuffixIndex === proxyName.length - relaySuffix.length
+    ) {
+      continue;
+    }
+    nextProxyNames.push(proxyName);
+  }
+
+  nextProxyNames.push(relayGroupName);
+  nodeSelectionGroup.proxies = uniqueStrings(nextProxyNames);
+}
+
 // 向主配置注入家宽出口和官方中转两个 MiyaIP 节点。
 function injectMiyaProxies(config, miyaCredentials) {
   var miyaProxies = [
@@ -962,6 +990,7 @@ function ensureChainGroup(config, region) {
 // 统一解析本轮注入所需的关键目标，减少主流程里的状态分散。
 function resolveRoutingTargets(config, region) {
   var relayTarget = resolveRelayTarget(config, region);
+  syncRelayGroupIntoNodeSelection(config, relayTarget);
   var chainGroupName = ensureChainGroup(config, region);
   return {
     relayTarget: relayTarget,

@@ -40,7 +40,8 @@ const EXPECTED = {
     relayName: "自选节点 + 家宽IP",
     transitName: "MiyaIP（官方中转）",
     relayMembers: ["🇸🇬 SG Auto 01"],
-    chainMembers: ["MiyaIP（官方中转）", "自选节点 + 家宽IP"]
+    chainMembers: ["MiyaIP（官方中转）", "自选节点 + 家宽IP"],
+    nodeSelectionMembers: ["🇸🇬 SG Auto 01", "🇸🇬|新加坡-链式代理-跳板"]
   },
   managedRulePrefix: [
     "PROCESS-NAME,Claude,🇸🇬|新加坡-链式代理-家宽IP出口",
@@ -254,6 +255,7 @@ function assertManagedProxyTopology(output, expectedRelayTarget) {
   const transitProxy = findProxy(output, EXPECTED.managedNodes.transitName);
   const relayGroup = findGroup(output, EXPECTED.relayGroupName);
   const chainGroup = findGroup(output, EXPECTED.chainGroupName);
+  const nodeSelectionGroup = findGroup(output, "节点选择");
 
   assert(relayProxy, "Expected relay proxy to exist");
   assert.strictEqual(relayProxy.type, "http");
@@ -285,6 +287,13 @@ function assertManagedProxyTopology(output, expectedRelayTarget) {
   assert.strictEqual(
     JSON.stringify(chainGroup.proxies),
     JSON.stringify(EXPECTED.managedNodes.chainMembers)
+  );
+
+  assert(nodeSelectionGroup, "Expected 节点选择 group to exist");
+  assert.strictEqual(nodeSelectionGroup.type, "select");
+  assert.strictEqual(
+    JSON.stringify(nodeSelectionGroup.proxies),
+    JSON.stringify(EXPECTED.managedNodes.nodeSelectionMembers)
   );
 }
 
@@ -567,6 +576,17 @@ function testBadExternalRegionGroupIsNotReused() {
   assertManagedProxyTopology(output, EXPECTED.relayGroupName);
 }
 
+function testNodeSelectionKeepsOnlyCurrentRelayGroup() {
+  const output = runMain(function (config) {
+    config["proxy-groups"][0].proxies = [
+      "🇸🇬 SG Auto 01",
+      "🇭🇰|香港-链式代理-跳板"
+    ];
+  }).output;
+
+  assertManagedProxyTopology(output, EXPECTED.relayGroupName);
+}
+
 function testRepeatedRunDoesNotCreateSelfReference() {
   const firstOutput = runMain().output;
   const rerunInput = JSON.parse(JSON.stringify(firstOutput));
@@ -608,6 +628,7 @@ testMissingStrictTargetFails();
 testExistingManagedObjectsAreReconciled();
 testChainGroupIsNotReusedAsRelayTarget();
 testBadExternalRegionGroupIsNotReused();
+testNodeSelectionKeepsOnlyCurrentRelayGroup();
 testRepeatedRunDoesNotCreateSelfReference();
 
 console.log("validate.js: all checks passed");

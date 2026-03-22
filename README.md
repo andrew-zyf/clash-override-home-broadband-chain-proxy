@@ -8,7 +8,7 @@
 
 > 开源仓库：[github.com/andrew-zyf/clash-override-chain-proxy](https://github.com/andrew-zyf/clash-override-chain-proxy)
 >
-> 当前主脚本版本：`v8.9`
+> 当前主脚本版本：`v8.11`
 
 ## 分流一览
 
@@ -89,8 +89,11 @@ var USER_OPTIONS = {
 
 - 在 Clash Party 里开启这两个覆写
 - 切回机场配置并启动代理
+- 脚本会把当前 `chainRegion` 对应的 `-链式代理-跳板` 组自动放进 `节点选择`；例如 `chainRegion: "SG"` 时，会出现 `🇸🇬|新加坡-链式代理-跳板`
 - 确认使用规则模式和 TUN 模式
 - 确认当前地区的家宽出口组已经出现
+
+这里显示的地区名称由 `家宽IP-链式代理.js` 里的 `chainRegion` 决定，不是固定新加坡。比如改成 `US` 之后，自动放进 `节点选择` 的就会是 `🇺🇸|美国-链式代理-跳板`；建议手动选择当前地区对应的这个跳板组。
 
 ![Clash Party 代理组页面](img/Clash%20Party%20代理组.png)
 
