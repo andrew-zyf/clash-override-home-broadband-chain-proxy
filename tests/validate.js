@@ -7,46 +7,66 @@ const repoRoot = path.resolve(__dirname, "..");
 const scriptPath = path.join(repoRoot, "src", "家宽IP-链式代理.js");
 const scriptCode = fs.readFileSync(scriptPath, "utf8");
 
-const CHAIN_GROUP_NAME = "🇸🇬|新加坡-链式代理-家宽IP出口";
-const RELAY_GROUP_NAME = "🇸🇬|新加坡线路-链式代理-跳板";
+// 关键链路目标和受管规则前缀。
+const EXPECTED = {
+  chainGroupName: "🇸🇬|新加坡-链式代理-家宽IP出口",
+  relayGroupName: "🇸🇬|新加坡线路-链式代理-跳板",
+  managedRulePrefix: [
+    "PROCESS-NAME,Claude,🇸🇬|新加坡-链式代理-家宽IP出口",
+    "PROCESS-NAME,Claude Helper,🇸🇬|新加坡-链式代理-家宽IP出口",
+    "PROCESS-NAME,ChatGPT,🇸🇬|新加坡-链式代理-家宽IP出口",
+    "PROCESS-NAME,ChatGPT Helper,🇸🇬|新加坡-链式代理-家宽IP出口",
+    "PROCESS-NAME,Perplexity,🇸🇬|新加坡-链式代理-家宽IP出口",
+    "PROCESS-NAME,Perplexity Helper,🇸🇬|新加坡-链式代理-家宽IP出口",
+    "PROCESS-NAME,Cursor,🇸🇬|新加坡-链式代理-家宽IP出口",
+    "PROCESS-NAME,Cursor Helper,🇸🇬|新加坡-链式代理-家宽IP出口",
+    "PROCESS-NAME,claude,🇸🇬|新加坡-链式代理-家宽IP出口",
+    "PROCESS-NAME,gemini,🇸🇬|新加坡-链式代理-家宽IP出口",
+    "PROCESS-NAME,codex,🇸🇬|新加坡-链式代理-家宽IP出口"
+  ],
+  direct: {
+    domesticOfficeDomains: [
+      "+.docs.qq.com",
+      "+.dingtalk.com",
+      "+.feishu.cn",
+      "+.wps.cn"
+    ],
+    domesticOfficeRules: [
+      "DOMAIN-SUFFIX,docs.qq.com,DIRECT",
+      "DOMAIN-SUFFIX,dingtalk.com,DIRECT",
+      "DOMAIN-SUFFIX,feishu.cn,DIRECT",
+      "DOMAIN-SUFFIX,wps.cn,DIRECT"
+    ],
+    overseasAppRules: [
+      "DOMAIN-SUFFIX,tailscale.com,DIRECT",
+      "DOMAIN-SUFFIX,tailscale.io,DIRECT",
+      "DOMAIN-SUFFIX,ts.net,DIRECT",
+      "IP-CIDR,100.64.0.0/10,DIRECT,no-resolve",
+      "IP-CIDR,100.100.100.100/32,DIRECT,no-resolve",
+      "IP-CIDR6,fd7a:115c:a1e0::/48,DIRECT,no-resolve"
+    ]
+  },
+  process: {
+    browserManaged: ["Comet", "Dia", "Atlas", "Google Chrome"],
+    browserExcluded: ["Arc", "Microsoft Edge"],
+    aiCliManaged: ["claude", "gemini", "codex"],
+    aiCliExcluded: ["opencode"],
+    unmanagedChain: ["Google Drive", "Visual Studio Code"],
+    unmanagedDirect: ["WeChat", "Tailscale"]
+  },
+  dns: {
+    overseasPolicyDomains: [
+      "+.sora.com",
+      "+.notebooklm.google",
+      "+.m365.cloud.microsoft"
+    ],
+    strictSnifferDomains: ["+.claude.ai", "+.google.com"],
+    fakeIpDomains: ["+.xboxlive.com", "stun.*.*"],
+    overseasAppDomains: ["+.tailscale.com", "+.tailscale.io", "+.ts.net"]
+  }
+};
 
-const DEFAULT_RULE_PREFIX = [
-  "PROCESS-NAME,Claude," + CHAIN_GROUP_NAME,
-  "PROCESS-NAME,Claude Helper," + CHAIN_GROUP_NAME,
-  "PROCESS-NAME,ChatGPT," + CHAIN_GROUP_NAME,
-  "PROCESS-NAME,ChatGPT Helper," + CHAIN_GROUP_NAME,
-  "PROCESS-NAME,Perplexity," + CHAIN_GROUP_NAME,
-  "PROCESS-NAME,Perplexity Helper," + CHAIN_GROUP_NAME,
-  "PROCESS-NAME,Cursor," + CHAIN_GROUP_NAME,
-  "PROCESS-NAME,Cursor Helper," + CHAIN_GROUP_NAME,
-  "PROCESS-NAME,claude," + CHAIN_GROUP_NAME,
-  "PROCESS-NAME,gemini," + CHAIN_GROUP_NAME,
-  "PROCESS-NAME,codex," + CHAIN_GROUP_NAME
-];
-
-const DOMESTIC_OFFICE_DOMAINS = [
-  "+.docs.qq.com",
-  "+.dingtalk.com",
-  "+.feishu.cn",
-  "+.wps.cn"
-];
-
-const DOMESTIC_OFFICE_DIRECT_RULES = [
-  "DOMAIN-SUFFIX,docs.qq.com,DIRECT",
-  "DOMAIN-SUFFIX,dingtalk.com,DIRECT",
-  "DOMAIN-SUFFIX,feishu.cn,DIRECT",
-  "DOMAIN-SUFFIX,wps.cn,DIRECT"
-];
-
-const OVERSEAS_APP_DIRECT_RULES = [
-  "DOMAIN-SUFFIX,tailscale.com,DIRECT",
-  "DOMAIN-SUFFIX,tailscale.io,DIRECT",
-  "DOMAIN-SUFFIX,ts.net,DIRECT",
-  "IP-CIDR,100.64.0.0/10,DIRECT,no-resolve",
-  "IP-CIDR,100.100.100.100/32,DIRECT,no-resolve",
-  "IP-CIDR6,fd7a:115c:a1e0::/48,DIRECT,no-resolve"
-];
-
+// 读取脚本并构造隔离执行环境。
 function loadSandbox() {
   const sandbox = {
     console,
@@ -60,14 +80,20 @@ function loadSandbox() {
   return sandbox;
 }
 
+// 构造最小基础配置，只保留当前脚本实际依赖的对象。
 function createBaseConfig() {
   return {
     proxies: [
       { name: "🇸🇬 SG Auto 01", type: "ss" },
-      { name: "🇭🇰 HK Auto 01", type: "ss" },
-      { name: "手动节点A", type: "ss" }
+      { name: "🇭🇰 HK Auto 01", type: "ss" }
     ],
-    "proxy-groups": [{ name: "节点选择", type: "select", proxies: ["🇸🇬 SG Auto 01"] }],
+    "proxy-groups": [
+      {
+        name: "节点选择",
+        type: "select",
+        proxies: ["🇸🇬 SG Auto 01"]
+      }
+    ],
     rules: [
       "DOMAIN-SUFFIX,claude.ai,DIRECT",
       "DOMAIN-SUFFIX,tailscale.com,REJECT",
@@ -82,6 +108,7 @@ function createBaseConfig() {
   };
 }
 
+// 运行主脚本，并允许测试按需覆写配置或沙箱。
 function runMain(configMutator, sandboxMutator) {
   const sandbox = loadSandbox();
   const config = createBaseConfig();
@@ -95,12 +122,14 @@ function runMain(configMutator, sandboxMutator) {
   };
 }
 
+// 提取受管规则身份，用于检查同一规则是否重复注入。
 function extractRuleIdentity(ruleLine) {
   const firstCommaIndex = ruleLine.indexOf(",");
   const secondCommaIndex = ruleLine.indexOf(",", firstCommaIndex + 1);
   return ruleLine.slice(0, secondCommaIndex);
 }
 
+// 断言规则前缀没有重复身份。
 function assertNoDuplicateRuleIdentities(ruleLines) {
   const seen = new Set();
   for (const ruleLine of ruleLines) {
@@ -126,6 +155,12 @@ function assertRulesExist(ruleLines, expectedRules) {
   }
 }
 
+function assertRulesMissing(ruleLines, unexpectedRules) {
+  for (const ruleLine of unexpectedRules) {
+    assertRuleMissing(ruleLines, ruleLine);
+  }
+}
+
 function assertRulePrefix(actualRules, expectedPrefix) {
   const actualPrefix = Array.prototype.slice.call(actualRules, 0, expectedPrefix.length);
   assert.strictEqual(JSON.stringify(actualPrefix), JSON.stringify(expectedPrefix));
@@ -143,127 +178,214 @@ function findGroup(output, groupName) {
   return output["proxy-groups"].find((group) => group.name === groupName);
 }
 
-function assertNameserverPolicyValue(output, domain, expectedValue) {
-  assert.deepStrictEqual(output.dns["nameserver-policy"][domain], expectedValue);
-}
-
-function assertCoreStrictRouting(output) {
-  assertRuleExists(output.rules, "DOMAIN-SUFFIX,claude.ai," + CHAIN_GROUP_NAME);
-  assertRuleExists(output.rules, "DOMAIN-SUFFIX,google.com," + CHAIN_GROUP_NAME);
-  assertRuleExists(output.rules, "DOMAIN-SUFFIX,youtube.com," + CHAIN_GROUP_NAME);
-  assertRuleExists(output.rules, "PROCESS-NAME,Claude," + CHAIN_GROUP_NAME);
-  assertRuleExists(output.rules, "PROCESS-NAME,claude," + CHAIN_GROUP_NAME);
-  assertRuleMissing(output.rules, "PROCESS-NAME,Comet," + CHAIN_GROUP_NAME);
-  assertRuleMissing(output.rules, "DOMAIN-SUFFIX,claude.ai,DIRECT");
-}
-
-function assertDomesticDirectCoverage(output, sandbox) {
-  assertRulesExist(output.rules, DOMESTIC_OFFICE_DIRECT_RULES);
-  assertRuleMissing(output.rules, "PROCESS-NAME,WeChat,DIRECT");
-  assertRuleMissing(output.rules, "PROCESS-NAME,DingTalk,DIRECT");
-  assertRuleMissing(output.rules, "PROCESS-NAME,Feishu,DIRECT");
-  assertRuleMissing(output.rules, "PROCESS-NAME,WPS Office,DIRECT");
-
-  for (const domain of DOMESTIC_OFFICE_DOMAINS) {
-    assertNameserverPolicyValue(output, domain, sandbox.BASE.dns.domestic);
+function assertNameserverPolicyValues(output, domains, expectedValue) {
+  for (const domain of domains) {
+    assert.deepStrictEqual(output.dns["nameserver-policy"][domain], expectedValue);
   }
 }
 
-function assertOverseasAppDirectCoverage(output, sandbox) {
-  assertRulesExist(output.rules, OVERSEAS_APP_DIRECT_RULES);
-  assertRuleMissing(output.rules, "PROCESS-NAME,Tailscale,DIRECT");
-  assertRuleMissing(output.rules, "PROCESS-NAME,tailscale,DIRECT");
-  assertRuleMissing(output.rules, "PROCESS-NAME,IPNExtension,DIRECT");
-
-  assertNameserverPolicyValue(output, "+.tailscale.com", sandbox.BASE.dns.overseas);
-  assertNameserverPolicyValue(output, "+.tailscale.io", sandbox.BASE.dns.overseas);
-  assertNameserverPolicyValue(output, "+.ts.net", sandbox.BASE.dns.overseas);
-  assert(output.dns["fallback-filter"].domain.includes("+.tailscale.com"));
-  assert(output.dns["fallback-filter"].domain.includes("+.tailscale.io"));
-  assert(output.dns["fallback-filter"].domain.includes("+.ts.net"));
-  assert(output.sniffer["skip-domain"].includes("+.tailscale.com"));
-  assert(output.sniffer["skip-domain"].includes("+.tailscale.io"));
-  assert(output.sniffer["skip-domain"].includes("+.ts.net"));
-  assert(!output.dns["fake-ip-filter"].includes("+.tailscale.com"));
+function assertArrayIncludesAll(values, expectedValues, label) {
+  for (const expectedValue of expectedValues) {
+    assert(
+      values.includes(expectedValue),
+      label + " missing expected value: " + expectedValue
+    );
+  }
 }
 
+function assertArrayExcludesAll(values, excludedValues, label) {
+  for (const excludedValue of excludedValues) {
+    assert(
+      !values.includes(excludedValue),
+      label + " unexpectedly contains: " + excludedValue
+    );
+  }
+}
+
+// 严格链式路由必须覆盖域外 AI 主域和受管 AI 进程。
+function assertCoreStrictRouting(output) {
+  assertRulesExist(output.rules, [
+    "DOMAIN-SUFFIX,claude.ai," + EXPECTED.chainGroupName,
+    "DOMAIN-SUFFIX,google.com," + EXPECTED.chainGroupName,
+    "DOMAIN-SUFFIX,youtube.com," + EXPECTED.chainGroupName,
+    "PROCESS-NAME,Claude," + EXPECTED.chainGroupName,
+    "PROCESS-NAME,claude," + EXPECTED.chainGroupName
+  ]);
+  assertRulesMissing(output.rules, [
+    "PROCESS-NAME,Comet," + EXPECTED.chainGroupName,
+    "DOMAIN-SUFFIX,claude.ai,DIRECT"
+  ]);
+}
+
+// 域内办公域名只走 DIRECT，不再依赖进程规则。
+function assertDomesticDirectCoverage(output, sandbox) {
+  assertRulesExist(output.rules, EXPECTED.direct.domesticOfficeRules);
+  assertRulesMissing(output.rules, [
+    "PROCESS-NAME,WeChat,DIRECT",
+    "PROCESS-NAME,DingTalk,DIRECT",
+    "PROCESS-NAME,Feishu,DIRECT",
+    "PROCESS-NAME,WPS Office,DIRECT"
+  ]);
+  assertNameserverPolicyValues(
+    output,
+    EXPECTED.direct.domesticOfficeDomains,
+    sandbox.BASE.dns.domestic
+  );
+}
+
+// 域外应用直连保持 DIRECT、域外 DoH 和 skip-domain 组合。
+function assertOverseasAppDirectCoverage(output, sandbox) {
+  assertRulesExist(output.rules, EXPECTED.direct.overseasAppRules);
+  assertRulesMissing(output.rules, [
+    "PROCESS-NAME,Tailscale,DIRECT",
+    "PROCESS-NAME,tailscale,DIRECT",
+    "PROCESS-NAME,IPNExtension,DIRECT"
+  ]);
+  assertNameserverPolicyValues(
+    output,
+    EXPECTED.dns.overseasAppDomains,
+    sandbox.BASE.dns.overseas
+  );
+  assertArrayIncludesAll(
+    output.dns["fallback-filter"].domain,
+    EXPECTED.dns.overseasAppDomains,
+    "fallback-filter.domain"
+  );
+  assertArrayIncludesAll(
+    output.sniffer["skip-domain"],
+    EXPECTED.dns.overseasAppDomains,
+    "sniffer.skip-domain"
+  );
+  assertArrayExcludesAll(
+    output.dns["fake-ip-filter"],
+    ["+.tailscale.com"],
+    "fake-ip-filter"
+  );
+}
+
+// DNS 和 Sniffer 仍要覆盖关键域外 AI 与支撑平台。
 function assertDnsAndSniffer(output, sandbox) {
-  assertNameserverPolicyValue(output, "+.sora.com", sandbox.BASE.dns.overseas);
-  assertNameserverPolicyValue(output, "+.notebooklm.google", sandbox.BASE.dns.overseas);
-  assertNameserverPolicyValue(output, "+.m365.cloud.microsoft", sandbox.BASE.dns.overseas);
-  assert(output.dns["fake-ip-filter"].includes("+.xboxlive.com"));
-  assert(output.dns["fake-ip-filter"].includes("stun.*.*"));
-  assert(output.dns["fallback-filter"].domain.includes("+.sora.com"));
-  assert(output.dns["fallback-filter"].domain.includes("+.youtube.com"));
-  assert(output.sniffer["force-domain"].includes("+.claude.ai"));
-  assert(output.sniffer["force-domain"].includes("+.google.com"));
+  assertNameserverPolicyValues(
+    output,
+    EXPECTED.dns.overseasPolicyDomains,
+    sandbox.BASE.dns.overseas
+  );
+  assertArrayIncludesAll(
+    output.dns["fake-ip-filter"],
+    EXPECTED.dns.fakeIpDomains,
+    "fake-ip-filter"
+  );
+  assertArrayIncludesAll(
+    output.dns["fallback-filter"].domain,
+    ["+.sora.com", "+.youtube.com"],
+    "fallback-filter.domain"
+  );
+  assertArrayIncludesAll(
+    output.sniffer["force-domain"],
+    EXPECTED.dns.strictSnifferDomains,
+    "sniffer.force-domain"
+  );
 }
 
 function testDefaultConfig() {
-  const { sandbox, output } = runMain();
+  const result = runMain();
+  const sandbox = result.sandbox;
+  const output = result.output;
 
   assert.strictEqual(sandbox.USER_OPTIONS.enableBrowserProcessProxy, false);
   assert.strictEqual(output._miya, undefined);
   assert.strictEqual(
     output.proxies.find((proxy) => proxy.name === "自选节点 + 家宽IP")["dialer-proxy"],
-    RELAY_GROUP_NAME
+    EXPECTED.relayGroupName
   );
-
-  assert(findGroup(output, CHAIN_GROUP_NAME), "Expected chain group to exist");
+  assert(findGroup(output, EXPECTED.chainGroupName), "Expected chain group to exist");
 
   assertCoreStrictRouting(output);
   assertDomesticDirectCoverage(output, sandbox);
   assertOverseasAppDirectCoverage(output, sandbox);
   assertDnsAndSniffer(output, sandbox);
   assertNoDuplicateRuleIdentities(output.rules.slice(0, 250));
-  assertRulePrefix(output.rules, DEFAULT_RULE_PREFIX);
+  assertRulePrefix(output.rules, EXPECTED.managedRulePrefix);
 }
 
 function testEnableBrowserProcessProxy() {
-  const { output } = runMain(null, function (sandbox) {
+  const output = runMain(null, function (sandbox) {
     sandbox.USER_OPTIONS.enableBrowserProcessProxy = true;
-  });
+  }).output;
 
   assertProcessRules(
     output,
     true,
-    ["Comet", "Dia", "Atlas", "Google Chrome"],
-    CHAIN_GROUP_NAME
+    EXPECTED.process.browserManaged,
+    EXPECTED.chainGroupName
   );
-  assertProcessRules(output, false, ["Arc", "Microsoft Edge"], CHAIN_GROUP_NAME);
+  assertProcessRules(
+    output,
+    false,
+    EXPECTED.process.browserExcluded,
+    EXPECTED.chainGroupName
+  );
 }
 
 function testAiCliProcessProxyDefaultsOn() {
-  const { output } = runMain();
-  assertProcessRules(output, true, ["claude", "gemini", "codex"], CHAIN_GROUP_NAME);
-  assertProcessRules(output, false, ["opencode"], CHAIN_GROUP_NAME);
+  const output = runMain().output;
+  assertProcessRules(
+    output,
+    true,
+    EXPECTED.process.aiCliManaged,
+    EXPECTED.chainGroupName
+  );
+  assertProcessRules(
+    output,
+    false,
+    EXPECTED.process.aiCliExcluded,
+    EXPECTED.chainGroupName
+  );
 }
 
 function testDisableAiCliProcessProxy() {
-  const { output } = runMain(null, function (sandbox) {
+  const output = runMain(null, function (sandbox) {
     sandbox.USER_OPTIONS.enableAiCliProcessProxy = false;
-  });
+  }).output;
 
-  assertProcessRules(output, false, ["claude", "gemini", "codex", "opencode"], CHAIN_GROUP_NAME);
+  assertProcessRules(
+    output,
+    false,
+    EXPECTED.process.aiCliManaged.concat(EXPECTED.process.aiCliExcluded),
+    EXPECTED.chainGroupName
+  );
 }
 
 function testOnlyAiAndBrowserProcessesAreManaged() {
-  const { output } = runMain();
-  assertRuleMissing(output.rules, "PROCESS-NAME,Google Drive," + CHAIN_GROUP_NAME);
-  assertRuleMissing(output.rules, "PROCESS-NAME,Visual Studio Code," + CHAIN_GROUP_NAME);
-  assertRuleMissing(output.rules, "PROCESS-NAME,WeChat,DIRECT");
-  assertRuleMissing(output.rules, "PROCESS-NAME,Tailscale,DIRECT");
+  const output = runMain().output;
+
+  assertProcessRules(
+    output,
+    false,
+    EXPECTED.process.unmanagedChain,
+    EXPECTED.chainGroupName
+  );
+  assertRulesMissing(
+    output.rules,
+    EXPECTED.process.unmanagedDirect.map(function (processName) {
+      return "PROCESS-NAME," + processName + ",DIRECT";
+    })
+  );
 }
 
 function testMissingRegionFails() {
   const sandbox = loadSandbox();
-  sandbox.USER_OPTIONS.chainRegion = "US";
   const config = createBaseConfig();
-  config.proxies = config.proxies.filter((proxy) => proxy.name.indexOf("🇸🇬") < 0);
+  config.proxies = config.proxies.filter(function (proxy) {
+    return proxy.name.indexOf("🇸🇬") < 0;
+  });
   config["proxy-groups"] = [{ name: "节点选择", type: "select", proxies: ["🇭🇰 HK Auto 01"] }];
+  sandbox.USER_OPTIONS.chainRegion = "US";
 
   assert.throws(
-    () => sandbox.main(config),
+    function () {
+      sandbox.main(config);
+    },
     /未找到可用的 US 跳板节点或代理组/
   );
 }
@@ -278,7 +400,9 @@ function testMissingStrictTargetFails() {
   };
 
   assert.throws(
-    () => sandbox.main(createBaseConfig()),
+    function () {
+      sandbox.main(createBaseConfig());
+    },
     /域外 AI 与支撑平台未直接指向当前 chainRegion 出口/
   );
 }
