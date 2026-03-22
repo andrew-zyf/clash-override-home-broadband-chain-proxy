@@ -9,7 +9,6 @@ const scriptCode = fs.readFileSync(scriptPath, "utf8");
 
 const CHAIN_GROUP_NAME = "🇸🇬|新加坡-链式代理-家宽IP出口";
 const RELAY_GROUP_NAME = "🇸🇬|新加坡线路-链式代理-跳板";
-const LEGACY_GROUP_NAME = "AI 严格链式代理";
 
 const DEFAULT_RULE_PREFIX = [
   "PROCESS-NAME,Claude," + CHAIN_GROUP_NAME,
@@ -166,7 +165,7 @@ function assertDomesticDirectCoverage(output, sandbox) {
   assertRuleMissing(output.rules, "PROCESS-NAME,WPS Office,DIRECT");
 
   for (const domain of DOMESTIC_OFFICE_DOMAINS) {
-    assertNameserverPolicyValue(output, domain, sandbox.DOH_DOMESTIC);
+    assertNameserverPolicyValue(output, domain, sandbox.BASE.dns.domestic);
   }
 }
 
@@ -176,9 +175,9 @@ function assertOverseasAppDirectCoverage(output, sandbox) {
   assertRuleMissing(output.rules, "PROCESS-NAME,tailscale,DIRECT");
   assertRuleMissing(output.rules, "PROCESS-NAME,IPNExtension,DIRECT");
 
-  assertNameserverPolicyValue(output, "+.tailscale.com", sandbox.DOH_OVERSEAS);
-  assertNameserverPolicyValue(output, "+.tailscale.io", sandbox.DOH_OVERSEAS);
-  assertNameserverPolicyValue(output, "+.ts.net", sandbox.DOH_OVERSEAS);
+  assertNameserverPolicyValue(output, "+.tailscale.com", sandbox.BASE.dns.overseas);
+  assertNameserverPolicyValue(output, "+.tailscale.io", sandbox.BASE.dns.overseas);
+  assertNameserverPolicyValue(output, "+.ts.net", sandbox.BASE.dns.overseas);
   assert(output.dns["fallback-filter"].domain.includes("+.tailscale.com"));
   assert(output.dns["fallback-filter"].domain.includes("+.tailscale.io"));
   assert(output.dns["fallback-filter"].domain.includes("+.ts.net"));
@@ -189,9 +188,9 @@ function assertOverseasAppDirectCoverage(output, sandbox) {
 }
 
 function assertDnsAndSniffer(output, sandbox) {
-  assertNameserverPolicyValue(output, "+.sora.com", sandbox.DOH_OVERSEAS);
-  assertNameserverPolicyValue(output, "+.notebooklm.google", sandbox.DOH_OVERSEAS);
-  assertNameserverPolicyValue(output, "+.m365.cloud.microsoft", sandbox.DOH_OVERSEAS);
+  assertNameserverPolicyValue(output, "+.sora.com", sandbox.BASE.dns.overseas);
+  assertNameserverPolicyValue(output, "+.notebooklm.google", sandbox.BASE.dns.overseas);
+  assertNameserverPolicyValue(output, "+.m365.cloud.microsoft", sandbox.BASE.dns.overseas);
   assert(output.dns["fake-ip-filter"].includes("+.xboxlive.com"));
   assert(output.dns["fake-ip-filter"].includes("stun.*.*"));
   assert(output.dns["fallback-filter"].domain.includes("+.sora.com"));
@@ -201,13 +200,7 @@ function assertDnsAndSniffer(output, sandbox) {
 }
 
 function testDefaultConfig() {
-  const { sandbox, output } = runMain(function (config) {
-    config["proxy-groups"].push({
-      name: LEGACY_GROUP_NAME,
-      type: "select",
-      proxies: ["错误旧组"]
-    });
-  });
+  const { sandbox, output } = runMain();
 
   assert.strictEqual(sandbox.USER_OPTIONS.enableBrowserProcessProxy, false);
   assert.strictEqual(output._miya, undefined);
@@ -217,7 +210,6 @@ function testDefaultConfig() {
   );
 
   assert(findGroup(output, CHAIN_GROUP_NAME), "Expected chain group to exist");
-  assert(!findGroup(output, LEGACY_GROUP_NAME), "Legacy proxy group should be removed");
 
   assertCoreStrictRouting(output);
   assertDomesticDirectCoverage(output, sandbox);

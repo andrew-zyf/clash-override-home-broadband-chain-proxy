@@ -1,19 +1,18 @@
 /**
  * Clash 家宽IP-链式代理覆写脚本
  *
- * 功能：
- * 1. 注入 MiyaIP 链式代理节点。
- * 2. 覆写 DNS 与域名嗅探配置。
- * 3. 注入 AI 严格链式代理、浏览器链式代理和三类 DIRECT 规则。
- * 4. 生成链式代理所需代理组并校验关键目标是否正确写入。
+ * 作用：
+ * 1. 注入 MiyaIP 链式代理节点和地区代理组。
+ * 2. 覆写 DNS、Sniffer，以及域外 AI / 浏览器 / DIRECT 分流规则。
+ * 3. 校验关键 AI 目标是否命中当前 `chainRegion` 出口。
  *
- * 总体分组说明：
- * 1. 用户参数：只放用户手动可改的入口。
- * 2. 基础常量：地区、节点、错误前缀、代理组命名等稳定常量。
- * 3. 原始分类数据源：按域外 AI、浏览器、域内直连、域外应用直连、网络直连拆开维护。
- * 4. 通用数据处理工具：只做去重、展平、排除、错误构建等纯工具操作。
- * 5. 派生分类与统一入口：把原始数据源收敛成 DNS、Sniffer、规则生成共享的单一入口。
- * 6. 执行函数：按初始化、DNS/Sniffer、代理链路、规则注入、最终校验的阅读顺序排列。
+ * 结构：
+ * 1. 用户参数
+ * 2. 基础常量
+ * 3. 原始分类数据源
+ * 4. 通用数据处理工具
+ * 5. 派生分类与统一入口
+ * 6. DNS / 代理链路 / 规则注入 / 主流程
  *
  * 依赖：
  * - 需先执行 `MiyaIP 凭证.js`，向 `config._miya` 注入凭证。
@@ -30,24 +29,20 @@
 // 用户可调参数
 // ---------------------------------------------------------------------------
 
-// 控制通用链式代理地区和手动跳板节点。
+// 这一层只放用户手动可改的入口参数。
 var USER_OPTIONS = {
-  // 通用链式代理中转地区，可选 US / JP / HK / SG，统一影响链式代理流量。
-  chainRegion: "SG",
-  // 手动指定跳板节点名，留空则按 chainRegion 自动匹配。
-  manualNode: "",
-  // 是否将浏览器主进程和 helper 进程一并纳入链式代理。
-  enableBrowserProcessProxy: false,
-  // 是否将常见 AI CLI 可执行文件纳入链式代理。
-  enableAiCliProcessProxy: true
+  chainRegion: "SG", // 通用链式代理中转地区，可选 US / JP / HK / SG
+  manualNode: "", // 手动指定跳板节点名，留空则自动匹配
+  enableBrowserProcessProxy: false, // 是否纳入浏览器主进程和 helper
+  enableAiCliProcessProxy: true // 是否纳入常见 AI CLI
 };
 
 // ---------------------------------------------------------------------------
 // 基础常量
 // ---------------------------------------------------------------------------
 
-// 这一层只保留运行期稳定常量。后续逻辑统一从 `BASE` 读取，
-// 避免地区、代理组命名、DNS 默认值在文件中多处散落。
+// 这一层只放运行期稳定常量，后续逻辑统一从 `BASE` 读取。
+// 这样可以避免地区、代理组命名和 DNS 默认值在文件中多处散落。
 var BASE = {
   regions: {
     US: { regex: /🇺🇸|美国|^US[\|丨\- ]/i, label: "美国", flag: "🇺🇸" },
@@ -70,7 +65,6 @@ var BASE = {
     relay: "线路-链式代理-跳板",
     chain: "-链式代理-家宽IP出口"
   },
-  legacyProxyGroupNames: ["AI 严格链式代理"],
   dns: {
     overseas: [
       "https://dns.google/dns-query",
@@ -83,19 +77,15 @@ var BASE = {
   }
 };
 
+// `fallback` 依赖已定义的 `overseas`，单独成行可避免重复写同一组域外 DoH。
 BASE.dns.fallback = BASE.dns.overseas.concat(["https://dns.quad9.net/dns-query"]);
-
-// 保留最小公开别名，兼容测试与外部只读检查入口；其余旧全局名不再恢复。
-var DOH_OVERSEAS = BASE.dns.overseas;
-var DOH_DOMESTIC = BASE.dns.domestic;
-var DOH_FALLBACK = BASE.dns.fallback;
 
 // ---------------------------------------------------------------------------
 // 原始分类数据源
 // ---------------------------------------------------------------------------
 
-// 这一层只保留原始业务分类，不做派生。带 `"+."` 的统一叫 `patterns`，
-// 后续如果要转成 `DOMAIN-SUFFIX` 规则，再在规则阶段显式转换为 suffixes。
+// 这一层只放原始业务分类，不在这里混入派生路由语义。
+// 带 `"+."` 的统一叫 `patterns`，转成规则时再显式转换为 suffixes。
 var SOURCE_PATTERNS = {
   apple: {
     core: [
@@ -123,20 +113,15 @@ var SOURCE_PATTERNS = {
         "+.gvt1.com",
         "+.gvt2.com"
       ],
-      // `withgoogle.com` 为 Google 官方活动与推广站点；`googleworkspace.com`
-      // 公开一方证据不足，避免作为默认规则注入。
-      google_workspace: [
-        "+.withgoogle.com"
-      ],
+      google_workspace: ["+.withgoogle.com"], // `googleworkspace.com` 证据不足，先不默认注入
       google_cloud: [
         "+.cloud.google.com"
       ],
-      // Microsoft 官方主域与官方基础设施入口；`windows.net` 属于官方基础设施宽域名。
       microsoft_core: [
         "+.microsoft.com",
         "+.live.com",
         "+.windows.net"
-      ],
+      ], // `windows.net` 作为 Microsoft 官方基础设施宽域名保留
       microsoft_productivity: [
         "+.office.com",
         "+.office.net",
@@ -152,12 +137,11 @@ var SOURCE_PATTERNS = {
         "+.msauth.net",
         "+.msecnd.net"
       ],
-      // Microsoft 开发者与 VS Code 生态基础设施。
       microsoft_developer: [
         "+.visualstudio.com",
         "+.vsassets.io",
         "+.vsmarketplacebadges.dev"
-      ],
+      ], // Microsoft 开发者与 VS Code 生态基础设施
       developer: [
         "+.github.com"
       ]
@@ -168,19 +152,15 @@ var SOURCE_PATTERNS = {
         "+.claude.com",
         "+.anthropic.com",
         "+.claudeusercontent.com",
-        // 公开一方文档证据较弱，但在实际规则集中较常见，先作为经验域名保留。
-        "+.claudemcpclient.com",
-        // Anthropic 站点静态资源经验域名，优先级低于主域名理解。
-        "+.servd-anthropic-website.b-cdn.net",
-        // Anthropic 官方场景使用过的短链。
-        "+.clau.de"
+        "+.claudemcpclient.com", // 公开证据较弱，先作为经验域名保留
+        "+.servd-anthropic-website.b-cdn.net", // Anthropic 站点静态资源经验域名
+        "+.clau.de" // Anthropic 官方场景使用过的短链
       ],
       openai: [
         "+.openai.com",
         "+.chatgpt.com",
         "+.sora.com",
-        // OpenAI 官方静态资源与内容分发基础设施。
-        "+.oaiusercontent.com",
+        "+.oaiusercontent.com", // OpenAI 官方静态资源与内容分发基础设施
         "+.oaistatic.com"
       ],
       google_ai: [
@@ -190,17 +170,15 @@ var SOURCE_PATTERNS = {
         "+.generativelanguage.googleapis.com",
         "+.ai.google",
         "+.notebooklm.google",
-        // 历史兼容入口，Google 已迁移到 AI Studio。
-        "+.makersuite.google.com",
+        "+.makersuite.google.com", // 历史兼容入口，Google 已迁移到 AI Studio
         "+.deepmind.google",
         "+.labs.google",
         "+.antigravity.google",
         "+.antigravity-ide.com"
       ],
-      // `perplexitycdn.com` 为 Perplexity 资源分发域名。
       perplexity: [
         "+.perplexity.ai",
-        "+.perplexitycdn.com"
+        "+.perplexitycdn.com" // Perplexity 资源分发域名
       ],
       router_and_tools: [
         "+.openrouter.ai"
@@ -346,7 +324,7 @@ var SOURCE_PATTERNS = {
   }
 };
 
-// 进程只保留 AI 与浏览器两类，避免非关键类别进程规则持续膨胀。
+// 这一层只放原始进程分类，当前只保留 AI 与浏览器两类。
 var SOURCE_PROCESSES = {
   chain: {
     aiApps: [
@@ -377,7 +355,7 @@ var SOURCE_PROCESSES = {
   }
 };
 
-// 网络地址规则目前只有直连对象，所以单独放一层即可。
+// 这一层只放原始网络地址规则，当前只有直连对象。
 var SOURCE_NETWORK_RULES = {
   direct: [
     { type: "IP-CIDR", value: "100.64.0.0/10", target: BASE.ruleTargets.direct },
@@ -389,6 +367,8 @@ var SOURCE_NETWORK_RULES = {
 // ---------------------------------------------------------------------------
 // 通用数据处理工具
 // ---------------------------------------------------------------------------
+
+// 这一层只放纯工具函数，不承载业务分组语义。
 
 // 对字符串列表做稳定去重，保留首次出现的顺序。
 function uniqueStrings(values) {
@@ -432,15 +412,6 @@ function excludeStrings(values, excludedValues) {
   return uniqueStrings(filteredValues);
 }
 
-// 从原生规则对象里提取指定类型的值列表。
-function extractRawRuleValues(rawRules, targetType) {
-  var values = [];
-  for (var i = 0; i < rawRules.length; i++) {
-    if (rawRules[i].type === targetType) values.push(rawRules[i].value);
-  }
-  return uniqueStrings(values);
-}
-
 // 把按类别分组的域名模式对象展平成单个数组并去重。
 function flattenGroupedPatterns(groupedPatterns) {
   var flattenedPatterns = [];
@@ -459,9 +430,12 @@ function createUserError(message) {
 // 派生分类与统一入口
 // ---------------------------------------------------------------------------
 
-// 这一层把原始业务分类收敛成少数复用入口，供 DNS、Sniffer、规则生成和校验共享。
-var DERIVED = {
-  patterns: {
+// 这一层把原始数据源收敛成共享入口，供 DNS、Sniffer、规则生成和校验复用。
+// 阅读顺序保持和文件头部说明一致：先展平 patterns，再派生路由入口，最后派生进程与网络规则。
+
+// 先把原始域名模式展平，保留业务分类，不在这一层混入路由语义。
+function buildDerivedPatternsBase() {
+  return {
     apple: flattenGroupedPatterns(SOURCE_PATTERNS.apple),
     chain: {
       platform: flattenGroupedPatterns(SOURCE_PATTERNS.chain.platform),
@@ -480,89 +454,90 @@ var DERIVED = {
       snifferForceBase: uniqueStrings(SOURCE_PATTERNS.policy.snifferForceBase.slice()),
       snifferSkipBase: uniqueStrings(SOURCE_PATTERNS.policy.snifferSkipBase.slice())
     }
-  },
-  processNames: {
-    direct: [],
-    chain: {
-      aiApps: uniqueStrings(SOURCE_PROCESSES.chain.aiApps.slice()),
-      aiCli: uniqueStrings(SOURCE_PROCESSES.chain.aiCli.slice()),
-      browsers: mergeStringGroups([
+  };
+}
+
+// 在展平后的模式之上补齐直连、严格路由和 Sniffer 入口。
+function buildDerivedPatterns() {
+  var patterns = buildDerivedPatternsBase();
+  var directDomesticGroups = [
+    patterns.direct.domestic.ai,
+    patterns.direct.domestic.office
+  ];
+  var directDomesticAll = mergeStringGroups(directDomesticGroups);
+  var directGroups = directDomesticGroups.concat([patterns.direct.overseasApps]);
+  var directAll = mergeStringGroups([
+    directDomesticAll,
+    patterns.direct.overseasApps
+  ]);
+  var strictPatterns = {
+    ai: excludeStrings(patterns.chain.ai, directAll),
+    support: excludeStrings(patterns.chain.platform, directAll),
+    validation: excludeStrings(
+      patterns.policy.dnsFallbackExtra,
+      directAll
+    )
+  };
+  var strictAll = mergeStringGroups([
+    strictPatterns.ai,
+    strictPatterns.support,
+    strictPatterns.validation
+  ]);
+  var generalChainPatterns = excludeStrings(patterns.chain.media, directAll);
+
+  patterns.direct.domestic.groups = directDomesticGroups;
+  patterns.direct.groups = directGroups;
+  patterns.strict = strictPatterns;
+  patterns.strict.all = strictAll;
+  patterns.general = {
+    chain: generalChainPatterns
+  };
+
+  patterns.sniffer = {
+    force: mergeStringGroups([
+      patterns.policy.snifferForceBase,
+      strictAll
+    ]),
+    skip: uniqueStrings(
+      patterns.policy.snifferSkipBase.concat(patterns.direct.overseasApps)
+    )
+  };
+
+  return patterns;
+}
+
+// 进程派生单独收口，避免和域名模式的路由语义混在一起。
+function buildDerivedProcessNames() {
+  var processNames = {
+    ai: {
+      apps: uniqueStrings(SOURCE_PROCESSES.chain.aiApps.slice()),
+      cli: uniqueStrings(SOURCE_PROCESSES.chain.aiCli.slice())
+    },
+    browser: {
+      all: mergeStringGroups([
         SOURCE_PROCESSES.chain.browser.confirmed,
         SOURCE_PROCESSES.chain.browser.inferred
       ])
     }
-  },
+  };
+
+  processNames.strict = {
+    base: processNames.ai.apps,
+    optionalAiCli: processNames.ai.cli
+  };
+  processNames.general = {
+    browser: processNames.browser.all
+  };
+
+  return processNames;
+}
+
+// DERIVED 是后续执行函数唯一应直接消费的派生入口。
+var DERIVED = {
+  patterns: buildDerivedPatterns(),
+  processNames: buildDerivedProcessNames(),
   networkRules: {
     direct: SOURCE_NETWORK_RULES.direct.slice()
-  }
-};
-
-DERIVED.patterns.direct.domestic.all = mergeStringGroups([
-  DERIVED.patterns.direct.domestic.ai,
-  DERIVED.patterns.direct.domestic.office
-]);
-DERIVED.patterns.direct.all = mergeStringGroups([
-  DERIVED.patterns.direct.domestic.all,
-  DERIVED.patterns.direct.overseasApps
-]);
-DERIVED.patterns.strict = {
-  ai: excludeStrings(
-    DERIVED.patterns.chain.ai,
-    DERIVED.patterns.direct.all
-  ),
-  support: excludeStrings(
-    DERIVED.patterns.chain.platform,
-    DERIVED.patterns.direct.all
-  ),
-  validation: excludeStrings(
-    DERIVED.patterns.policy.dnsFallbackExtra,
-    DERIVED.patterns.direct.all
-  )
-};
-DERIVED.patterns.strict.all = mergeStringGroups([
-  DERIVED.patterns.strict.ai,
-  DERIVED.patterns.strict.support,
-  DERIVED.patterns.strict.validation
-]);
-DERIVED.patterns.generalChain = excludeStrings(
-  DERIVED.patterns.chain.media,
-  DERIVED.patterns.direct.all
-);
-DERIVED.patterns.sniffer = {
-  force: mergeStringGroups([
-    DERIVED.patterns.policy.snifferForceBase,
-    DERIVED.patterns.strict.all
-  ]),
-  skip: uniqueStrings(
-    DERIVED.patterns.policy.snifferSkipBase.concat(
-      DERIVED.patterns.direct.overseasApps
-    )
-  )
-};
-DERIVED.processNames.strictBase = excludeStrings(
-  DERIVED.processNames.chain.aiApps,
-  DERIVED.processNames.direct
-);
-DERIVED.processNames.generalBrowser = excludeStrings(
-  DERIVED.processNames.chain.browsers,
-  DERIVED.processNames.direct
-);
-DERIVED.routing = {
-  patterns: {
-    direct: {
-      domestic: [
-        DERIVED.patterns.direct.domestic.ai,
-        DERIVED.patterns.direct.domestic.office
-      ],
-      overseasApps: [DERIVED.patterns.direct.overseasApps]
-    },
-    strict: DERIVED.patterns.strict,
-    generalChain: DERIVED.patterns.generalChain
-  },
-  processNames: {
-    strictBase: DERIVED.processNames.strictBase,
-    strictOptionalAiCli: DERIVED.processNames.chain.aiCli,
-    generalBrowser: DERIVED.processNames.generalBrowser
   }
 };
 
@@ -574,18 +549,10 @@ var VALIDATION_TARGETS = [
 ];
 
 // ---------------------------------------------------------------------------
-// 执行装配与初始化
-// ---------------------------------------------------------------------------
-
-// 在所有修改前确保主配置存在脚本依赖的基础容器，并清理旧残留。
-function initializeManagedConfig(config) {
-  ensureProxyContainers(config);
-  removeLegacyProxyGroups(config["proxy-groups"]);
-}
-
-// ---------------------------------------------------------------------------
 // DNS + Sniffer
 // ---------------------------------------------------------------------------
+
+// 这一段负责 DNS 与 Sniffer 的组装和写入。
 
 // 把脚本生成的 DNS 和域名嗅探配置写入主配置。
 function applyDnsAndSniffer(config) {
@@ -606,49 +573,43 @@ function buildNameserverPolicy() {
     "geosite:openai": BASE.dns.overseas
   };
 
-  // 严格 AI 域名与支撑平台走域外 DoH，Apple 走域内 DoH。
   assignNameserverPolicyDomains(
     policy,
-    DERIVED.routing.patterns.strict.support,
+    DERIVED.patterns.strict.support,
     BASE.dns.overseas
-  );
-  assignNameserverPolicyDomains(policy, DERIVED.patterns.apple, BASE.dns.domestic);
-  // 域外应用直连对象固定使用域外 DoH，避免被域内解析污染。
+  ); // 严格支撑平台走域外 DoH
+  assignNameserverPolicyDomains(policy, DERIVED.patterns.apple, BASE.dns.domestic); // Apple 走域内 DoH
   assignNameserverPolicyDomains(
     policy,
     DERIVED.patterns.direct.overseasApps,
     BASE.dns.overseas
-  );
+  ); // 域外应用直连固定走域外 DoH
 
-  // AI 服务与出口验证域名走域外 DoH。
   assignNameserverPolicyDomains(
     policy,
-    DERIVED.routing.patterns.strict.ai,
+    DERIVED.patterns.strict.ai,
     BASE.dns.overseas
-  );
+  ); // AI 服务走域外 DoH
   assignNameserverPolicyDomains(
     policy,
-    DERIVED.routing.patterns.strict.validation,
+    DERIVED.patterns.strict.validation,
     BASE.dns.overseas
-  );
-  // 域内 AI 走域内 DoH。
+  ); // 出口验证域名走域外 DoH
   assignNameserverPolicyDomains(
     policy,
     DERIVED.patterns.direct.domestic.ai,
     BASE.dns.domestic
-  );
-  // 域内办公软件走域内 DoH。
+  ); // 域内 AI 走域内 DoH
   assignNameserverPolicyDomains(
     policy,
     DERIVED.patterns.direct.domestic.office,
     BASE.dns.domestic
-  );
-  // 流媒体与域外社交走域外 DoH。
+  ); // 域内办公软件走域内 DoH
   assignNameserverPolicyDomains(
     policy,
-    DERIVED.routing.patterns.generalChain,
+    DERIVED.patterns.general.chain,
     BASE.dns.overseas
-  );
+  ); // 流媒体与域外社交走域外 DoH
 
   return policy;
 }
@@ -679,7 +640,6 @@ function buildDnsFakeIpFilter() {
     "*.msftconnecttest.com",
     "*.msftncsi.com"
   ];
-  // 游戏主机联机和游戏平台入口通常依赖真实 IP。
   var gamingRealtimeDomains = [
     "+.srv.nintendo.net",
     "+.stun.playstation.net",
@@ -687,19 +647,17 @@ function buildDnsFakeIpFilter() {
     "+.xboxlive.com",
     "*.battlenet.com.cn",
     "*.blzstatic.cn"
-  ];
-  // 通用 STUN 域名常见于 WebRTC、语音和点对点实时连接。
+  ]; // 游戏主机和游戏平台入口通常依赖真实 IP
   var stunRealtimeDomains = [
     "stun.*.*",
     "stun.*.*.*"
-  ];
-  // 本地路由器和家庭网络设备入口应直接返回真实 IP。
+  ]; // 通用 STUN 常见于 WebRTC、语音和点对点连接
   var homeRouterDomains = [
     "+.router.asus.com",
     "+.linksys.com",
     "+.tplinkwifi.net",
     "*.xiaoqiang.net"
-  ];
+  ]; // 本地路由器和家庭网络设备入口应返回真实 IP
 
   return localNetworkDomains
     .concat(timeSyncDomains)
@@ -714,7 +672,7 @@ function buildDnsFakeIpFilter() {
 function buildDnsFallbackFilterDomains() {
   return mergeStringGroups([
     DERIVED.patterns.strict.all,
-    DERIVED.patterns.generalChain,
+    DERIVED.patterns.general.chain,
     DERIVED.patterns.direct.overseasApps
   ]);
 }
@@ -777,6 +735,8 @@ function buildSnifferConfig() {
 // MiyaIP 代理链路
 // ---------------------------------------------------------------------------
 
+// 这一段负责 MiyaIP 代理链路的解析、组装和绑定。
+
 // 确保主配置里存在代理、代理组和规则三个容器。
 function ensureProxyContainers(config) {
   if (!config.proxies) config.proxies = [];
@@ -831,20 +791,6 @@ function findProxyByName(proxies, proxyName) {
 // 按名称查找单个代理组。
 function findProxyGroupByName(proxyGroups, groupName) {
   return findNamedItem(proxyGroups, groupName);
-}
-
-// 从代理组列表中移除同名代理组。
-function removeProxyGroupByName(proxyGroups, groupName) {
-  for (var i = proxyGroups.length - 1; i >= 0; i--) {
-    if (proxyGroups[i].name === groupName) proxyGroups.splice(i, 1);
-  }
-}
-
-// 清理旧版遗留代理组，避免旧配置残留影响当前行为。
-function removeLegacyProxyGroups(proxyGroups) {
-  for (var i = 0; i < BASE.legacyProxyGroupNames.length; i++) {
-    removeProxyGroupByName(proxyGroups, BASE.legacyProxyGroupNames[i]);
-  }
 }
 
 // 判断给定名称是否在节点或代理组中存在。
@@ -924,23 +870,20 @@ function ensureRegionGroup(config, region, groupNameSuffix, reuseExisting) {
   var groupName = buildRegionGroupName(regionMeta, groupNameSuffix);
   var proxyGroups = config["proxy-groups"];
 
-  // 优先复用订阅里已有的地区代理组。
   if (reuseExisting) {
     var reusableGroupName = findReusableRegionGroupName(
       proxyGroups,
       regionRegex
     );
     if (reusableGroupName) return reusableGroupName;
-  }
+  } // 优先复用订阅里已有的地区代理组
 
-  // 检查是否已存在同名组。
-  if (findProxyGroupByName(proxyGroups, groupName)) return groupName;
+  if (findProxyGroupByName(proxyGroups, groupName)) return groupName; // 已存在同名组则直接复用
 
-  // 筛选地区节点，并排除 MiyaIP 自身节点。
   var regionNodeNames = collectRegionNodeNames(config.proxies, regionRegex);
   if (regionNodeNames.length === 0) return null;
 
-  addRegionUrlTestGroup(proxyGroups, groupName, regionNodeNames);
+  addRegionUrlTestGroup(proxyGroups, groupName, regionNodeNames); // 用地区节点创建 url-test 组
 
   return groupName;
 }
@@ -984,9 +927,8 @@ function bindDialerProxy(config, relayTarget) {
     else delete relayProxy["dialer-proxy"];
   }
 
-  // 官方中转节点不挂 `dialer-proxy`。
   var transitProxy = findProxyByName(config.proxies, BASE.nodeNames.transit);
-  if (transitProxy) delete transitProxy["dialer-proxy"];
+  if (transitProxy) delete transitProxy["dialer-proxy"]; // 官方中转节点不挂 dialer-proxy
 }
 
 // 确保存在一个承载 MiyaIP 官方中转与家宽出口的链式代理组。
@@ -1032,6 +974,8 @@ function applyManagedRouting(config, routingTargets) {
 // ---------------------------------------------------------------------------
 // 规则注入（去重 + 置顶）
 // ---------------------------------------------------------------------------
+
+// 这一段负责受管规则的生成、去重、置顶和校验。
 
 // 提取规则的 `"TYPE,value"` 标识。
 function getRuleIdentity(ruleLine) {
@@ -1178,11 +1122,9 @@ function addProcessRulesIfNotExists(
 
 // 按当前用户选项返回应纳入严格 AI 路由的进程分组。
 function buildStrictProcessGroups() {
-  var processGroups = [DERIVED.routing.processNames.strictBase];
+  var processGroups = [DERIVED.processNames.strict.base];
   if (USER_OPTIONS.enableAiCliProcessProxy) {
-    processGroups.push(
-      DERIVED.routing.processNames.strictOptionalAiCli
-    );
+    processGroups.push(DERIVED.processNames.strict.optionalAiCli);
   }
   return processGroups;
 }
@@ -1190,7 +1132,7 @@ function buildStrictProcessGroups() {
 // 按当前用户选项返回应继续使用普通链式代理的进程分组。
 function buildGeneralChainProcessGroups() {
   if (!USER_OPTIONS.enableBrowserProcessProxy) return [];
-  return [DERIVED.routing.processNames.generalBrowser];
+  return [DERIVED.processNames.general.browser];
 }
 
 // 统一生成严格 AI 路由规则，按用途分类收拢输入，避免重复或冲突。
@@ -1212,7 +1154,7 @@ function buildStrictChainRules(strictAiTarget) {
   addSuffixRulesIfNotExists(
     ruleLines,
     seenRuleIdentities,
-    DERIVED.routing.patterns.strict.all,
+    DERIVED.patterns.strict.all,
     strictAiTarget
   );
   return ruleLines;
@@ -1237,7 +1179,7 @@ function buildGeneralChainRules(chainGroupName) {
   addSuffixRulesIfNotExists(
     ruleLines,
     seenRuleIdentities,
-    DERIVED.routing.patterns.generalChain,
+    DERIVED.patterns.general.chain,
     chainGroupName
   );
 
@@ -1249,9 +1191,7 @@ function buildDirectRules() {
   var ruleLines = [];
   var seenRuleIdentities = {};
   var directNetworkRules = [];
-  var directPatternGroups = DERIVED.routing.patterns.direct.domestic.concat(
-    DERIVED.routing.patterns.direct.overseasApps
-  );
+  var directPatternGroups = DERIVED.patterns.direct.groups;
   var i;
 
   for (i = 0; i < DERIVED.networkRules.direct.length; i++) {
@@ -1288,16 +1228,6 @@ function assertManagedRuleTarget(ruleLines, type, value, target) {
 function validateManagedRouting(config, routingTargets) {
   var i;
 
-  for (i = 0; i < BASE.legacyProxyGroupNames.length; i++) {
-    if (findProxyGroupByName(config["proxy-groups"], BASE.legacyProxyGroupNames[i])) {
-      throw createUserError(
-        "遗留旧版代理组未被清理: " +
-          BASE.legacyProxyGroupNames[i] +
-          "，请检查当前覆写脚本是否仍在重复注入旧规则"
-      );
-    }
-  }
-
   if (routingTargets.strictAiTarget !== routingTargets.chainGroupName) {
     throw createUserError(
       "域外 AI 与支撑平台未直接指向当前 chainRegion 出口，请检查 chainRegion 或代理组注入逻辑"
@@ -1318,6 +1248,8 @@ function validateManagedRouting(config, routingTargets) {
 // 主流程入口
 // ---------------------------------------------------------------------------
 
+// 这一段负责主流程装配，按初始化、DNS、链路、规则、校验的顺序执行。
+
 // 把带通配前缀的域名模式转换成规则使用的裸域名后缀。
 function toSuffix(domainPattern) {
   return domainPattern.replace("+.", "");
@@ -1337,20 +1269,20 @@ function takeMiyaCredentials(config) {
 
 // 按初始化、DNS/Sniffer、代理链路、规则注入、最终校验的顺序装配输出配置。
 function main(config) {
-  var miyaCredentials = takeMiyaCredentials(config);
+  var miyaCredentials = takeMiyaCredentials(config); // 先取出并隐藏凭证
   var routingTargets;
 
-  initializeManagedConfig(config);
-  applyDnsAndSniffer(config);
-  injectMiyaProxies(config, miyaCredentials);
+  ensureProxyContainers(config); // 初始化基础容器
+  applyDnsAndSniffer(config); // 先写 DNS 与 Sniffer
+  injectMiyaProxies(config, miyaCredentials); // 注入 MiyaIP 节点
 
   routingTargets = resolveRoutingTargets(
     config,
     USER_OPTIONS.chainRegion,
     USER_OPTIONS.manualNode
-  );
-  applyManagedRouting(config, routingTargets);
-  validateManagedRouting(config, routingTargets);
+  ); // 解析链路目标
+  applyManagedRouting(config, routingTargets); // 写入拨号与规则
+  validateManagedRouting(config, routingTargets); // 校验关键目标
 
   return config;
 }
