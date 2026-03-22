@@ -1,15 +1,10 @@
-# 凭证文件（含敏感信息）
+# 本地凭证文件
 MiyaIP 凭证.js
 src/MiyaIP 凭证.js
 
-# 私有脚本目录
-私有/
-
-# 本地子目录（文件已复制到根目录）
-公开/
-
-# 本地设计 / 计划草稿目录
+# 本地草稿目录
 docs/superpowers/
+superpowers/
 
-# macOS
+# 系统文件
 .DS_Store
