@@ -37,6 +37,9 @@ The design combines two enforcement strategies:
 - Automatically choose the safest long-term region for the user.
 - Route all normal web browsing through the chain path by default.
 - Expand the repository into a generic multi-profile proxy manager.
+- Redesign existing browser, media/social, or other non-AI chain-routing behavior
+  beyond the minimum changes required to prevent regression while introducing
+  strict AI routing.
 
 ## Current Context
 
@@ -199,6 +202,11 @@ Selection rule for additions:
 - Local-network and router-management domains
 - Time sync and local-network support domains already excluded from fake-ip
 
+Local-network, router-management, and time-sync entries are primarily fake-ip
+and Sniffer exclusion inputs. They should not be mistaken for a requirement to
+emit matching direct domain rules unless the current script already does so for a
+specific subset.
+
 ### Conflict precedence
 
 If an object is ever classified into both a strict set and a direct-only set,
@@ -312,6 +320,8 @@ When `strictAiRouting` is `true`, the script must enforce the full strict path:
 When `strictAiRouting` is `false`, the script enters an explicit compatibility
 mode with a weaker contract:
 
+- canonical strict/direct object assembly remains the same
+- DNS and Sniffer generation remain the same
 - AI-related traffic is still routed by managed process and domain rules, but
   those rules target the current `chainRegion` chain exit group directly rather
   than a dedicated strict AI proxy group
@@ -319,11 +329,15 @@ mode with a weaker contract:
 - fail-closed validation is limited to existing baseline checks such as selected
   region relay resolution and valid `manualNode` lookup
 - the repository no longer guarantees that all managed AI/support traffic uses
-  only the selected chain exit
+  only the selected chain exit, or that strict-path leakage checks pass
 
 This mode exists for user-controlled fallback behavior and backward
 compatibility, not as an implicit degradation path. The implementation must make
 the mode distinction obvious in code, tests, and documentation.
+
+Non-AI chain-routing categories in the current script, including browser and
+media/social routing, remain behaviorally unchanged in this work unless a change
+is required to keep the new strict AI path from regressing them.
 
 ## Error Handling
 
