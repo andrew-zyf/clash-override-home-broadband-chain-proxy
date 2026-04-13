@@ -57,7 +57,7 @@ function runMain(configMutator, sandboxMutator) {
 
 function regionGroupName(sandbox, regionKey, suffix) {
   const meta = sandbox.BASE.regions[regionKey];
-  return meta.flag + "|" + meta.label + suffix;
+  return meta.flag +meta.label + suffix;
 }
 
 function expectedGroupNames(sandbox) {
@@ -71,11 +71,11 @@ function expectedGroupNames(sandbox) {
 }
 
 function derivedBrowserProcessNames(sandbox) {
-  return sandbox.DERIVED.processNames.general.browser.slice();
+  return sandbox.DERIVED.processNames.browser.slice();
 }
 
 function derivedAiCliProcessNames(sandbox) {
-  return sandbox.DERIVED.processNames.strict.optionalAiCli.slice();
+  return sandbox.DERIVED.processNames.aiCli.slice();
 }
 
 // ---------------------------------------------------------------------------
@@ -107,6 +107,14 @@ function assertRulesMissing(ruleLines, unexpected) {
   for (const line of unexpected) {
     assert(!ruleLines.includes(line), "Unexpected rule found: " + line);
   }
+}
+
+function assertRuleAppearsBefore(ruleLines, earlier, later) {
+  const earlierIndex = ruleLines.indexOf(earlier);
+  const laterIndex = ruleLines.indexOf(later);
+  assert(earlierIndex >= 0, "Expected rule not found: " + earlier);
+  assert(laterIndex >= 0, "Expected rule not found: " + later);
+  assert(earlierIndex < laterIndex, "Expected rule order: " + earlier + " before " + later);
 }
 
 function assertProcessRules(output, enabled, processNames, target) {
@@ -205,7 +213,11 @@ function sampleRuleLines(sample, target) {
 function assertCoreStrictRouting(output, sandbox) {
   const names = expectedGroupNames(sandbox);
   assertRulesExist(output.rules, sampleRuleLines(sandbox.EXPECTED_ROUTES.toChain, names.chain));
+  assertRulesExist(output.rules, [
+    "DOMAIN-SUFFIX,meta.ai," + names.chain
+  ]);
   assertRulesMissing(output.rules, ["DOMAIN-SUFFIX,claude.ai,DIRECT"]);
+  assertRulesMissing(output.rules, ["DOMAIN-SUFFIX,meta.ai,DIRECT"]);
 }
 
 function assertMediaRouting(output, sandbox) {
@@ -220,12 +232,24 @@ function assertBrowserRouting(output, sandbox) {
   // 受管浏览器不应被误路由到媒体目标
   assertProcessRules(output, false, derivedBrowserProcessNames(sandbox), names.media);
   // 未列入源的浏览器不应出现
-  assertProcessRules(output, false, ["Arc", "Microsoft Edge"], names.chain);
+  assertProcessRules(output, false, ["Google Chrome", "Arc", "Microsoft Edge", "Safari"], names.chain);
+}
+
+function assertBrowserRoutingPriority(output, sandbox) {
+  const names = expectedGroupNames(sandbox);
+  const browserRule = "PROCESS-NAME,Dia," + names.chain;
+  assertRuleAppearsBefore(output.rules, "DOMAIN-SUFFIX,youtube.com," + names.media, browserRule);
+  assertRuleAppearsBefore(output.rules, "DOMAIN-SUFFIX,tailscale.com,DIRECT", browserRule);
+  assertRuleAppearsBefore(output.rules, "DOMAIN-SUFFIX,docs.qq.com,DIRECT", browserRule);
 }
 
 function assertDomesticDirectCoverage(output, sandbox) {
   const officeDomains = ["+.docs.qq.com", "+.dingtalk.com", "+.feishu.cn", "+.wps.cn"];
+  const cloudDomains = ["+.aliyuncs.com"];
   assertRulesExist(output.rules, officeDomains.map((d) =>
+    "DOMAIN-SUFFIX," + d.replace("+.", "") + ",DIRECT"
+  ));
+  assertRulesExist(output.rules, cloudDomains.map((d) =>
     "DOMAIN-SUFFIX," + d.replace("+.", "") + ",DIRECT"
   ));
   // 办公软件走域名规则，不应出现进程直连
@@ -235,6 +259,7 @@ function assertDomesticDirectCoverage(output, sandbox) {
     "PROCESS-NAME,Feishu,DIRECT"
   ]);
   assertNameserverPolicyValues(output, officeDomains, sandbox.BASE.dns.domestic);
+  assertNameserverPolicyValues(output, cloudDomains, sandbox.BASE.dns.domestic);
 }
 
 function assertOverseasAppDirectCoverage(output, sandbox) {
@@ -257,15 +282,31 @@ function assertOverseasAppDirectCoverage(output, sandbox) {
   assertExcludes(output.dns["fake-ip-filter"], ["+.tailscale.com"], "fake-ip-filter");
 }
 
+function assertOverseasDohDirectCoverage(output, sandbox) {
+  const domains = [
+    "+.immersivetranslate.com",
+    "+.mineru.org.cn",
+    "+.mineru.oss-cn-shanghai.aliyuncs.com"
+  ];
+  assertRulesExist(output.rules, domains.map((d) =>
+    "DOMAIN-SUFFIX," + d.replace("+.", "") + ",DIRECT"
+  ));
+  assertNameserverPolicyValues(output, domains, sandbox.BASE.dns.overseas);
+  assertIncludes(output.dns["fallback-filter"].domain, domains, "fallback-filter.domain");
+  assertIncludes(output.sniffer["skip-domain"], domains, "sniffer.skip-domain");
+}
+
 function assertDnsAndSniffer(output, sandbox) {
   assertNameserverPolicyValues(
     output,
-    ["+.sora.com", "+.notebooklm.google", "+.m365.cloud.microsoft"],
+    ["+.sora.com", "+.notebooklm.google", "+.m365.cloud.microsoft", "+.meta.ai"],
     sandbox.BASE.dns.overseas
   );
-  assertIncludes(output.dns["fake-ip-filter"], ["+.xboxlive.com", "stun.*.*"], "fake-ip-filter");
-  assertIncludes(output.dns["fallback-filter"].domain, ["+.sora.com", "+.youtube.com"], "fallback-filter.domain");
+  assertNameserverPolicyValues(output, ["+.push.apple.com"], sandbox.BASE.dns.domestic);
+  assertIncludes(output.dns["fake-ip-filter"], ["+.push.apple.com", "+.xboxlive.com", "stun.*.*"], "fake-ip-filter");
+  assertIncludes(output.dns["fallback-filter"].domain, ["+.sora.com", "+.youtube.com", "+.meta.ai"], "fallback-filter.domain");
   assertIncludes(output.sniffer["force-domain"], ["+.claude.ai", "+.google.com"], "sniffer.force-domain");
+  assertIncludes(output.sniffer["skip-domain"], ["+.push.apple.com"], "sniffer.skip-domain");
 }
 
 // ---------------------------------------------------------------------------
@@ -275,14 +316,15 @@ function assertDnsAndSniffer(output, sandbox) {
 function testDefaultConfig() {
   const { sandbox, output } = runMain();
   assert.strictEqual(sandbox.USER_OPTIONS.routeBrowserToChain, true);
-  assert.strictEqual(sandbox.USER_OPTIONS.routeAiCliToChain, true);
   assert.strictEqual(output._miya, undefined);
   assertManagedProxyTopology(output, sandbox);
   assertCoreStrictRouting(output, sandbox);
   assertMediaRouting(output, sandbox);
   assertBrowserRouting(output, sandbox);
+  assertBrowserRoutingPriority(output, sandbox);
   assertDomesticDirectCoverage(output, sandbox);
   assertOverseasAppDirectCoverage(output, sandbox);
+  assertOverseasDohDirectCoverage(output, sandbox);
   assertDnsAndSniffer(output, sandbox);
   assertNoDuplicateRuleIdentities(output.rules.slice(0, 250));
 }
@@ -302,18 +344,18 @@ function testAiCliProcessProxyDefaultsOn() {
   assertProcessRules(output, false, ["opencode"], names.chain);
 }
 
-function testDisableAiCliProcessProxy() {
+function testAiCliProcessProxyAlwaysOn() {
   const { sandbox, output } = runMain(null, (sb) => {
-    sb.USER_OPTIONS.routeAiCliToChain = false;
+    sb.USER_OPTIONS.routeBrowserToChain = false;
   });
   const names = expectedGroupNames(sandbox);
-  assertProcessRules(output, false, derivedAiCliProcessNames(sandbox), names.chain);
+  assertProcessRules(output, true, derivedAiCliProcessNames(sandbox), names.chain);
 }
 
 function testOnlyAiAndBrowserProcessesAreManaged() {
   const { sandbox, output } = runMain();
   const names = expectedGroupNames(sandbox);
-  assertProcessRules(output, false, ["Google Drive", "Visual Studio Code"], names.chain);
+  assertProcessRules(output, false, ["Google Chrome", "Google Drive", "Visual Studio Code"], names.chain);
   assertRulesMissing(output.rules, [
     "PROCESS-NAME,WeChat,DIRECT",
     "PROCESS-NAME,Tailscale,DIRECT"
@@ -323,13 +365,37 @@ function testOnlyAiAndBrowserProcessesAreManaged() {
 function testMissingRegionFails() {
   const sandbox = loadSandbox();
   sandbox.USER_OPTIONS.chainRegion = "JP";
-  assert.throws(() => sandbox.main(createBaseConfig()), /未找到可用的 JP 节点/);
+  sandbox.BASE.regionFallbackOrder.chain = [];
+  assert.throws(() => sandbox.main(createBaseConfig()), /未找到可用的 chainRegion 节点/);
 }
 
 function testMissingMediaRegionFails() {
   const sandbox = loadSandbox();
   sandbox.USER_OPTIONS.mediaRegion = "JP";
-  assert.throws(() => sandbox.main(createBaseConfig()), /未找到可用的 JP 媒体节点/);
+  sandbox.BASE.regionFallbackOrder.media = [];
+  assert.throws(() => sandbox.main(createBaseConfig()), /未找到可用的 mediaRegion 媒体节点/);
+}
+
+function testChainRegionFallsBackToAvailableRegion() {
+  const { sandbox, output } = runMain(null, (sb) => {
+    sb.USER_OPTIONS.chainRegion = "JP";
+  });
+  const suffix = sandbox.BASE.groupNameSuffixes;
+  const fallbackRelay = regionGroupName(sandbox, "SG", suffix.relay);
+  const fallbackChain = regionGroupName(sandbox, "SG", suffix.chain);
+  assert(findGroup(output, fallbackRelay), "fallback relay group missing");
+  assert(findGroup(output, fallbackChain), "fallback chain group missing");
+  assertRulesExist(output.rules, sampleRuleLines(sandbox.EXPECTED_ROUTES.toChain, fallbackChain));
+  assert.strictEqual(findProxy(output, sandbox.BASE.nodeNames.relay)["dialer-proxy"], fallbackRelay);
+}
+
+function testMediaRegionFallsBackToAvailableRegion() {
+  const { sandbox, output } = runMain(null, (sb) => {
+    sb.USER_OPTIONS.mediaRegion = "JP";
+  });
+  const fallbackMedia = regionGroupName(sandbox, "US", sandbox.BASE.groupNameSuffixes.media);
+  assert(findGroup(output, fallbackMedia), "fallback media group missing");
+  assertRulesExist(output.rules, sampleRuleLines(sandbox.EXPECTED_ROUTES.toMedia, fallbackMedia));
 }
 
 function testMissingStrictTargetFails() {
@@ -349,8 +415,8 @@ function testExistingManagedObjectsAreReconciled() {
     const base = loadSandbox().BASE;
     const nodeNames = base.nodeNames;
     const suffix = base.groupNameSuffixes;
-    const flag = base.regions.SG.flag + "|" + base.regions.SG.label;
-    const mediaFlag = base.regions.US.flag + "|" + base.regions.US.label;
+    const flag = base.regions.SG.flag +base.regions.SG.label;
+    const mediaFlag = base.regions.US.flag +base.regions.US.label;
 
     config.proxies.push({
       name: nodeNames.relay, type: "http", server: "bad", port: 1,
@@ -370,7 +436,7 @@ function testExistingManagedObjectsAreReconciled() {
 function testChainGroupIsNotReusedAsRelayTarget() {
   const { sandbox, output } = runMain((config) => {
     const base = loadSandbox().BASE;
-    const chainName = base.regions.SG.flag + "|" + base.regions.SG.label + base.groupNameSuffixes.chain;
+    const chainName = base.regions.SG.flag +base.regions.SG.label + base.groupNameSuffixes.chain;
     config["proxy-groups"].push({
       name: chainName, type: "select",
       proxies: [base.nodeNames.transit, base.nodeNames.relay]
@@ -391,8 +457,8 @@ function testBadExternalRegionGroupIsNotReused() {
 function testNodeSelectionKeepsOnlyCurrentRelayGroup() {
   const { sandbox, output } = runMain((config) => {
     const base = loadSandbox().BASE;
-    const staleRelay = base.regions.HK.flag + "|" + base.regions.HK.label + base.groupNameSuffixes.relay;
-    const staleMedia = base.regions.SG.flag + "|" + base.regions.SG.label + base.groupNameSuffixes.media;
+    const staleRelay = base.regions.HK.flag +base.regions.HK.label + base.groupNameSuffixes.relay;
+    const staleMedia = base.regions.SG.flag +base.regions.SG.label + base.groupNameSuffixes.media;
     config["proxy-groups"][0].proxies = ["🇸🇬 SG Auto 01", staleRelay, staleMedia];
   });
   assertManagedProxyTopology(output, sandbox);
@@ -421,8 +487,10 @@ const tests = [
   testDefaultConfig,
   testDisableBrowserProcessProxy,
   testAiCliProcessProxyDefaultsOn,
-  testDisableAiCliProcessProxy,
+  testAiCliProcessProxyAlwaysOn,
   testOnlyAiAndBrowserProcessesAreManaged,
+  testChainRegionFallsBackToAvailableRegion,
+  testMediaRegionFallsBackToAvailableRegion,
   testMissingRegionFails,
   testMissingMediaRegionFails,
   testMissingStrictTargetFails,
