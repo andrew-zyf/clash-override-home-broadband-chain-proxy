@@ -1,45 +1,31 @@
 // Clash 家宽IP-链式代理覆写脚本
 //
-// 作用：
-// 1. 注入 MiyaIP 链式代理节点、AI 家宽出口组，以及媒体地区组。
-// 2. 把域外 AI、支撑平台、AI CLI 与受管浏览器稳定绑定到 `chainRegion` 出口。
-// 3. 把社交和流媒体绑定到 `mediaRegion`，与家宽链路脱钩。
-// 4. 覆写 DNS、Sniffer 和 DIRECT 保留规则，并在收尾阶段校验关键目标。
+// 把 AI 整条链路（会话本体 + 登录反机器人 + 订阅支付 + 特性开关上报）锁进家宽 IP 链式出口；
+// 流媒体 / 社交 / IM 走独立 mediaRegion；域内业务直连；其余按订阅默认。
+// DNS / Sniffer / 分流规则三层共用一份 POLICY 分类，规则与解析永远同步。
 //
-// 架构（自顶向下）：
-//   USER_OPTIONS     用户可调参数
-//   BASE             运行期常量（地区、节点名、组名后缀、DNS、规则前缀）
-//   SOURCE_*         原始分类的裸 `+.domain` 列表。按路由意图拆成顶层常量：
-//                    - SOURCE_APPLE
-//                    - SOURCE_CHAIN_PLATFORM / SOURCE_CHAIN_AI
-//                    - SOURCE_MEDIA
-//                    - SOURCE_DIRECT_DOMESTIC_AI / SOURCE_DIRECT_DOMESTIC_OFFICE
-//                    - SOURCE_DIRECT_OVERSEAS_APPS
-//                    - SOURCE_AI_EGRESS_VALIDATION
-//                    - SOURCE_SNIFFER_FORCE_BASE / SOURCE_SNIFFER_SKIP_BASE
-//   SOURCE_PROCESSES / SOURCE_NETWORK_RULES  进程与网络地址
-//   EXPECTED_ROUTES  路由样本表（toChain/toMedia），派生校验目标与测试期望
-//   POLICY           策略表：pattern + route/dnsZone/sniffer/fakeIp/fallbackFilter
-//                    所有派生视图（strict/general/direct/sniffer）均从 POLICY 投影
-//   DERIVED          从 POLICY 投影出的数据视图（patterns + processNames + networkRules），
-//                    供下面的 build-/write- 系函数直接读取
-//   builder/writer/resolver/assert  按动词前缀系统化：
-//     build*         纯产出（返回值，无副作用）
-//     resolve*       读取并计算（可能触发幂等写入作为副产物）
-//     write*         写入 config（副作用为主）
-//     assert*        运行期断言
-//   main(config)     装配顺序：容器初始化 → DNS/Sniffer → MiyaIP 节点 →
-//                    路由目标解析 → 规则写入 → 校验
+// 数据流（自上而下）：
 //
-// 依赖：
-// - 需先执行 `MiyaIP 凭证.js`，向 `config._miya` 注入凭证。
+//   USER_OPTIONS     用户可调参数（地区 + 浏览器开关）
+//   BASE             运行期常量（地区表、节点名、组名后缀、DoH、规则前缀）
+//   SOURCE_*         按路由意图分桶的 `+.domain` 字面量
+//                      SOURCE_CHAIN / SOURCE_MEDIA / SOURCE_GLOBAL_DEFAULT /
+//                      SOURCE_CN_DIRECT / SOURCE_OVERSEAS_DIRECT /
+//                      SOURCE_LOCAL_DIRECT / SOURCE_NETWORK_DIRECT
+//   POLICY           单一权威表：每条 entry 写明
+//                      route / dnsZone / sniffer / fakeIpBypass / fallbackFilter
+//                    新增分类只改 POLICY 一处，下游全部自动同步。
+//   DERIVED          从 POLICY 投影出的下游视图：patterns / processNames / networkRules
+//   EXPECTED_ROUTES  端到端路由样本（toChain / toMedia），加载期 + 测试期共用
+//   main(config)     装配顺序：容器 → DNS/Sniffer → MiyaIP 节点 →
+//                    地区目标解析 → 规则注入 → 收尾校验
 //
-// 兼容性：
-// - 运行环境为 Clash Party 的 JavaScriptCore。
-// - 使用 ES5 语法，不依赖箭头函数、解构赋值、模板字符串、
-//   展开语法、`Object.values()`、`Object.fromEntries()` 等 ES6+ 特性。
+// 函数前缀约定：build*=纯产出  resolve*=读+幂等写  write*=改 config  assert*=运行期断言
 //
-// @version 9.0
+// 依赖：先跑 `MiyaIP 凭证.js` 把凭证写到 `config._miya`，再跑本脚本。
+// 兼容性：Clash Party 的 JavaScriptCore；只用 ES5 语法。
+//
+// @version 9.2
 
 // ---------------------------------------------------------------------------
 // 用户可调参数
@@ -48,8 +34,7 @@
 var USER_OPTIONS = {
   chainRegion: "SG", // AI 家宽出口前一跳地区，可选 US / JP / HK / SG
   mediaRegion: "US", // 媒体默认地区，可选 US / JP / HK / SG
-  routeBrowserToChain: true, // 是否让受管浏览器按应用名继续强制走 chainRegion
-  routeAiCliToChain: true // 是否让常见 AI CLI 按应用名继续强制走 chainRegion
+  routeBrowserToChain: true // 是否让 AI 向浏览器按应用名继续强制走 chainRegion
 };
 
 // ---------------------------------------------------------------------------
@@ -62,7 +47,9 @@ var BASE = {
     US: { regex: /🇺🇸|美国|^US[|丨\- ]/i, label: "美国", flag: "🇺🇸" },
     JP: { regex: /🇯🇵|日本|^JP[|丨\- ]/i, label: "日本", flag: "🇯🇵" },
     HK: { regex: /🇭🇰|香港|^HK[|丨\- ]/i, label: "香港", flag: "🇭🇰" },
-    SG: { regex: /🇸🇬|新加坡|^SG[|丨\- ]/i, label: "新加坡", flag: "🇸🇬" }
+    SG: { regex: /🇸🇬|新加坡|^SG[|丨\- ]/i, label: "新加坡", flag: "🇸🇬" },
+    TW: { regex: /🇹🇼|台湾|^TW[|丨\- ]/i, label: "台湾", flag: "🇹🇼" },
+    KR: { regex: /🇰🇷|韩国|^KR[|丨\- ]/i, label: "韩国", flag: "🇰🇷" }
   },
   nodeNames: {
     relay: "自选节点 + 家宽IP",
@@ -80,9 +67,13 @@ var BASE = {
   urlTestProbeUrl: "http://www.gstatic.com/generate_204",
   miyaProxyNameKeyword: "MiyaIP",
   groupNameSuffixes: {
-    relay: "-链式代理.跳板",
-    chain: "-链式代理.家宽IP出口",
+    relay: "-AI|链式代理.跳板",
+    chain: "-AI|链式代理.家宽出口",
     media: "-媒体"
+  },
+  regionFallbackOrder: {
+    chain: ["SG", "TW", "JP", "KR", "US"], // 家宽出口优先低时延亚洲地区，最后再回退到美国
+    media: ["US", "JP", "HK"]              // 媒体优先美区常见流媒体，其次回退到日 / 港
   },
   dns: {
     overseas: [
@@ -104,121 +95,333 @@ BASE.dns.fallback = BASE.dns.overseas.concat(["https://dns.quad9.net/dns-query"]
 // 模式字面量（SOURCE_*）
 // ---------------------------------------------------------------------------
 
-// 按路由意图拆成若干顶层常量，每块就是一个语义桶。
-// 路由 / DNS / sniffer 等行为在下面的 POLICY 层统一注入，这里只维护"谁属于哪个业务桶"。
-// 转成规则时由 `toSuffix` 去掉 `+.` 前缀。
+// 这里只列"哪些域名属于哪个业务桶"，路由/DNS/sniffer 行为统一在下面的 POLICY 注入。
+// 模式形如 `+.domain`，转成规则时由 `toSuffix` 去掉 `+.` 前缀。
 
-// ---------- Apple（fake-ip 绕过 + 境内 DoH，无路由规则） ----------
-var SOURCE_APPLE = {
-  core: [
-    "+.apple.com",
-    "+.icloud.com"
-  ],
-  content: [
-    "+.icloud-content.com",
-    "+.mzstatic.com",
-    "+.cdn-apple.com",
-    "+.aaplimg.com"
-  ],
-  services: ["+.apple-cloudkit.com"]
+// ---------- Chain · 链式代理 ----------
+var SOURCE_CHAIN = {
+  support: {
+      google_core: [
+        "+.google.com",
+        "+.googleapis.com",
+        "+.googleusercontent.com"
+      ],
+      google_static: [
+        "+.gstatic.com",
+        "+.ggpht.com",
+        "+.gvt1.com",
+        "+.gvt2.com"
+      ],
+      google_workspace: ["+.withgoogle.com"], // `googleworkspace.com` 证据不足，先不默认注入
+      google_cloud: [
+        "+.cloud.google.com"
+      ],
+      microsoft_core: [
+        "+.microsoft.com",
+        "+.live.com",
+        "+.windows.net"
+      ], // `windows.net` 作为 Microsoft 官方基础设施宽域名保留
+      microsoft_productivity: [
+        "+.office.com",
+        "+.office.net",
+        "+.office365.com",
+        "+.m365.cloud.microsoft",
+        "+.sharepoint.com",
+        "+.onenote.com",
+        "+.onedrive.com"
+      ],
+      microsoft_auth: [
+        "+.microsoftonline.com",
+        "+.msftauth.net",
+        "+.msauth.net",
+        "+.msecnd.net"
+      ],
+      microsoft_developer: [
+        "+.visualstudio.com",
+        "+.vsassets.io",
+        "+.vsmarketplacebadges.dev"
+      ], // Microsoft 开发者与 VS Code 生态基础设施
+      developer_git_hosts: [
+        "+.github.com",
+        "+.githubusercontent.com", // raw.githubusercontent.com 等，GFW 下常被 DNS 污染
+        "+.gitlab.com",
+        "+.gitlab-static.net",
+        "+.bitbucket.org",
+        "+.atlassian.com",         // Jira / Confluence / Bitbucket 官网
+        "+.atlassian.net"          // 客户工作区子域
+      ],
+      developer_package_registries: [
+        "+.npmjs.org",             // npm registry（Claude Code 自更新 + JS 项目依赖）
+        "+.npmjs.com",
+        "+.pypi.org",              // Python
+        "+.pythonhosted.org",      // PyPI 包文件 CDN
+        "+.crates.io",             // Rust
+        "+.rubygems.org",          // Ruby
+        "+.docker.com",            // Docker Hub
+        "+.docker.io"
+      ],
+      developer_deployment: [
+        "+.vercel.com",
+        "+.vercel.app",
+        "+.vercel-storage.com",
+        "+.netlify.com",
+        "+.netlify.app",
+        "+.supabase.com",
+        "+.supabase.co",
+        "+.fly.io",
+        "+.fly.dev",
+        "+.render.com",
+        "+.onrender.com",
+        "+.railway.app"
+      ],
+      developer_tools: [
+        "+.jetbrains.com",
+        "+.jetbrains.space"
+      ],
+      developer_docs_and_qa: [
+        "+.stackoverflow.com",
+        "+.sstatic.net",           // Stack Exchange 静态资源
+        "+.mozilla.org",           // 含 developer.mozilla.org / MDN
+        "+.readthedocs.io",
+        "+.readthedocs.org",
+        "+.gitbook.io",
+        "+.gitbook.com"
+      ]
+  },
+  ai: {
+      anthropic: [
+        "+.claude.ai",
+        "+.claude.com",
+        "+.anthropic.com",
+        "+.claudeusercontent.com",
+        "+.clau.de" // Anthropic 官方场景使用过的短链
+      ],
+      openai: [
+        "+.openai.com",
+        "+.chatgpt.com",
+        "+.sora.com",
+        "+.oaiusercontent.com", // OpenAI 官方静态资源与内容分发基础设施
+        "+.oaistatic.com"
+      ],
+      google_ai: [
+        "+.gemini.google.com",
+        "+.aistudio.google.com",
+        "+.ai.google.dev",
+        "+.generativelanguage.googleapis.com",
+        "+.ai.google",
+        "+.notebooklm.google",
+        "+.makersuite.google.com", // 历史兼容入口，Google 已迁移到 AI Studio
+        "+.deepmind.google",
+        "+.labs.google"
+      ],
+      google_antigravity: [
+        "+.antigravity.google",
+        "+.antigravity-ide.com" // Antigravity IDE 的非 google 子域资源站
+      ],
+      perplexity: [
+        "+.perplexity.ai",
+        "+.perplexitycdn.com" // Perplexity 资源分发域名
+      ],
+      router_and_tools: [
+        "+.openrouter.ai"
+      ],
+      meta: [
+        "+.meta.ai"
+      ],
+      xai: [
+        "+.x.ai",
+        "+.grok.com"
+      ],
+      cursor: [
+        "+.cursor.sh",
+        "+.cursor.com"
+      ], // Cursor 后端与鉴权域名；PROCESS-NAME 仅覆盖进程，域名层仍需显式入链
+      mistral: [
+        "+.mistral.ai"        // 含 api / console / codestral 全部子域
+      ],
+      huggingface: [
+        "+.huggingface.co",
+        "+.hf.co",            // 短链
+        "+.hf.space"          // Spaces 应用托管
+      ],
+      replicate: [
+        "+.replicate.com",
+        "+.replicate.delivery" // 模型输出 CDN
+      ],
+      groq: [
+        "+.groq.com"
+      ],
+      together: [
+        "+.together.ai",
+        "+.together.xyz"
+      ],
+      elevenlabs: [
+        "+.elevenlabs.io"      // 语音合成
+      ],
+      midjourney: [
+        "+.midjourney.com"
+      ],
+      runway: [
+        "+.runwayml.com"       // Runway 视频生成
+      ],
+      stability: [
+        "+.stability.ai"
+      ],
+      ideogram: [
+        "+.ideogram.ai"
+      ],
+      civitai: [
+        "+.civitai.com"        // SD 模型与社区
+      ],
+      ai_search: [
+        "+.you.com",           // You.com / YouChat
+        "+.phind.com",         // Phind 编程搜索
+        "+.kagi.com"           // Kagi 付费搜索
+      ],
+      character_and_companion: [
+        "+.character.ai",
+        "+.pi.ai"              // Inflection / Pi
+      ]
+  },
+  // AI 会话共享的第三方集成：登录反机器人、第三方鉴权、订阅结算、特性开关与错误上报。
+  // 这些域名由多家 AI 厂商共用，统一随主会话走家宽链路，避免 IP 不一致触发的风控与指纹漂移。
+  // Cloudflare Turnstile (challenges.cloudflare.com) 已被 chain.cloudflare 的 +.cloudflare.com 覆盖。
+  integrations: {
+      antibot: [
+        "+.arkoselabs.com",  // ChatGPT 登录的 Arkose FunCaptcha（token 绑定客户端 IP）
+        "+.funcaptcha.com",
+        "+.recaptcha.net",   // reCAPTCHA 独立域，并不走 google.com
+        "+.hcaptcha.com"     // hCaptcha（Discord / 部分 AI 注册）
+      ],
+      auth_providers: [
+        "+.auth0.com",       // ChatGPT Team 等使用 Auth0
+        "+.auth0cdn.com",
+        "+.clerk.com",       // OpenRouter / 多家 AI 创业用 Clerk
+        "+.clerk.dev",
+        "+.clerk.accounts.dev",
+        "+.okta.com"         // 企业 SSO（含 Anthropic Console 团队席位）
+      ],
+      payments: [
+        "+.stripe.com",      // Claude Pro / ChatGPT Plus / Perplexity Pro 主要结算入口
+        "+.stripe.network",
+        "+.paypal.com",      // PayPal
+        "+.paypalobjects.com", // PayPal CDN
+        "+.paddle.com",      // Paddle（Apple 友好的订阅平台）
+        "+.lemonsqueezy.com" // 独立 AI 应用常用
+      ],
+      telemetry: [
+        "+.statsig.com",     // Claude Code / Claude.ai / ChatGPT 的 feature flag
+        "+.statsigapi.net",
+        "+.featuregates.org",
+        "+.featureassets.org",
+        "+.sentry.io",       // Sentry 错误上报
+        "+.sentry-cdn.com",
+        "+.posthog.com",     // PostHog（Claude.ai 等）
+        "+.segment.com",     // Segment / Twilio Segment
+        "+.segment.io",
+        "+.segmentapis.com",
+        "+.mixpanel.com",
+        "+.amplitude.com",
+        "+.datadoghq.com",   // Datadog RUM 浏览器端
+        "+.browser-intake-datadoghq.com"
+      ]
+  },
+  force: {
+      cloudflare: [
+        "+.cloudflare.com"
+      ]
+  },
+  apps: {
+      ai: {
+        apps: [
+          "Claude",
+          "ChatGPT",
+          "Perplexity",
+          "Cursor"
+        ],
+        helperSuffixes: [
+          "Helper"
+        ],
+        exact: [
+          "ChatGPTHelper",
+          "Claude Helper (Renderer)",
+          "Claude Helper (GPU)",
+          "Claude Helper (Plugin)",
+          // macOS PROCESS-NAME 匹配 Bundle 可执行名，不含 `.app` 后缀。
+          // 未列入此处的应用：
+          //   - Claude Code / URL Handler 都以 `claude` 运行，统一通过 ai.cli 命中。
+          //   - Antigravity 的 Bundle 可执行名是 `Electron`，无法按进程名精确匹配，改走域名规则。
+          "Quotio"
+        ],
+        cli: ["claude", "gemini", "codex"]
+      },
+      browser: {
+        apps: [
+          "Dia",
+          "Atlas",
+          "SunBrowser"
+        ],
+        helperSuffixes: [
+          "Helper",
+          "Helper (Renderer)",
+          "Helper (GPU)",
+          "Helper (Plugin)",
+          "Helper (Alerts)"
+        ]
+      }
+  }
 };
 
-// ---------- Chain · 支撑平台（AI 登录 / 开发 / 文档） ----------
-var SOURCE_CHAIN_PLATFORM = {
-  google_core: [
-    "+.google.com",
-    "+.googleapis.com",
-    "+.googleusercontent.com"
-  ],
-  google_static: [
-    "+.gstatic.com",
-    "+.ggpht.com",
-    "+.gvt1.com",
-    "+.gvt2.com"
-  ],
-  google_workspace: ["+.withgoogle.com"], // `googleworkspace.com` 证据不足，先不默认注入
-  google_cloud: [
-    "+.cloud.google.com"
-  ],
-  microsoft_core: [
-    "+.microsoft.com",
-    "+.live.com",
-    "+.windows.net"
-  ], // `windows.net` 作为 Microsoft 官方基础设施宽域名保留
-  microsoft_productivity: [
-    "+.office.com",
-    "+.office.net",
-    "+.office365.com",
-    "+.m365.cloud.microsoft",
-    "+.sharepoint.com",
-    "+.onenote.com",
-    "+.onedrive.com"
-  ],
-  microsoft_auth: [
-    "+.microsoftonline.com",
-    "+.msftauth.net",
-    "+.msauth.net",
-    "+.msecnd.net"
-  ],
-  microsoft_developer: [
-    "+.visualstudio.com",
-    "+.vsassets.io",
-    "+.vsmarketplacebadges.dev"
-  ], // Microsoft 开发者与 VS Code 生态基础设施
-  developer: [
-    "+.github.com"
-  ]
-};
-
-// ---------- Chain · AI 服务本身 ----------
-var SOURCE_CHAIN_AI = {
-  anthropic: [
-    "+.claude.ai",
-    "+.claude.com",
-    "+.anthropic.com",
-    "+.claudeusercontent.com",
-    "+.clau.de" // Anthropic 官方场景使用过的短链
-  ],
-  openai: [
-    "+.openai.com",
-    "+.chatgpt.com",
-    "+.sora.com",
-    "+.oaiusercontent.com", // OpenAI 官方静态资源与内容分发基础设施
-    "+.oaistatic.com"
-  ],
-  google_ai: [
-    "+.gemini.google.com",
-    "+.aistudio.google.com",
-    "+.ai.google.dev",
-    "+.generativelanguage.googleapis.com",
-    "+.ai.google",
-    "+.notebooklm.google",
-    "+.makersuite.google.com", // 历史兼容入口，Google 已迁移到 AI Studio
-    "+.deepmind.google",
-    "+.labs.google"
-  ],
-  google_antigravity: [
-    "+.antigravity.google",
-    "+.antigravity-ide.com" // Antigravity IDE 的非 google 子域资源站
-  ],
-  perplexity: [
-    "+.perplexity.ai",
-    "+.perplexitycdn.com" // Perplexity 资源分发域名
-  ],
-  router_and_tools: [
-    "+.openrouter.ai"
-  ],
-  xai: [
-    "+.x.ai",
-    "+.grok.com"
-  ],
-  immersivetranslate: [
-    "+.immersivetranslate.com"
-  ]
+// ---------- Global Default · 域外默认代理 ----------
+var SOURCE_GLOBAL_DEFAULT = {
+  cloud: {
+      cloudflare: [
+        "+.cloudflare-dns.com",
+        "+.cdn.cloudflare.net",
+        "+.workers.dev",
+        "+.pages.dev"
+      ],
+      aws: [
+        "+.amazonaws.com",
+        "+.awsstatic.com",
+        "+.cloudfront.net"
+      ],
+      fastly: [
+        "+.fastly.com",
+        "+.fastly.net",
+        "+.fastlylb.net"
+      ],
+      akamai: [
+        "+.akamai.net",
+        "+.akamaiedge.net",
+        "+.akamaihd.net",
+        "+.akamaized.net",
+        "+.edgekey.net",
+        "+.edgesuite.net"
+      ],
+      azure_cdn: [
+        "+.azureedge.net",
+        "+.azurefd.net"
+      ],
+      jsdelivr: [
+        "+.jsdelivr.net"
+      ],
+      bunny: [
+        "+.bunnycdn.com",
+        "+.b-cdn.net"        // BunnyCDN 客户加速域
+      ],
+      cloudinary: [
+        "+.cloudinary.com"   // 图片 / 视频 SaaS CDN
+      ]
+  }
 };
 
 // ---------- Media（独立地区组，不走家宽链路） ----------
+// 分四类：视频流媒体 / 音乐流媒体 / 社交 / 即时通讯。
+// 这一桶里的所有域名都路由到 `mediaRegion`（默认 US），与家宽 chain 解耦，
+// 也借此跨越对这些站点不友好的网络环境（GFW、地区封锁等）。
 var SOURCE_MEDIA = {
+  // ---- 视频流媒体 ----
   youtube: [
     "+.youtube.com",
     "+.googlevideo.com",
@@ -235,20 +438,124 @@ var SOURCE_MEDIA = {
     "+.nflximg.com",
     "+.nflxext.com"
   ],
+  disney_plus: [
+    "+.disneyplus.com",
+    "+.disney-plus.net",
+    "+.dssott.com",   // Disney+ 流媒体 CDN
+    "+.bamgrid.com"   // BAMTech（Disney 流媒体后端）
+  ],
+  hbo_max: [
+    "+.max.com",
+    "+.hbomax.com",
+    "+.hbomaxcdn.com",
+    "+.hbonow.com",
+    "+.maxgo.com"
+  ],
+  peacock: [
+    "+.peacocktv.com"      // NBCUniversal Peacock
+  ],
+  paramount_plus: [
+    "+.paramountplus.com",
+    "+.cbsivideo.com",     // 旧 CBS All Access 残留 CDN
+    "+.paramount.com"
+  ],
+  crunchyroll: [
+    "+.crunchyroll.com",   // 动漫流媒体
+    "+.cr-bundles.com"
+  ],
+  vimeo: [
+    "+.vimeo.com",
+    "+.vimeocdn.com"
+  ],
+  dailymotion: [
+    "+.dailymotion.com",
+    "+.dmcdn.net"
+  ],
+  hulu: [
+    "+.hulu.com",
+    "+.hulustream.com",
+    "+.huluim.com"
+  ],
+  prime_video: [
+    "+.primevideo.com",
+    "+.aiv-cdn.net",     // Prime Video CDN（不会牵连 amazon.com 主站和 AWS）
+    "+.aiv-delivery.net"
+  ],
+  twitch: [
+    "+.twitch.tv",
+    "+.ttvnw.net",
+    "+.jtvnw.net"
+  ],
+
+  // ---- 音乐流媒体 ----
+  spotify: [
+    "+.spotify.com",
+    "+.scdn.co",         // Spotify 静态资源
+    "+.spotifycdn.com"
+  ],
+  soundcloud: [
+    "+.soundcloud.com",
+    "+.sndcdn.com"       // SoundCloud CDN
+  ],
+  bandcamp: [
+    "+.bandcamp.com"
+  ],
+
+  // ---- 社交 ----
   twitter: [
     "+.twitter.com",
     "+.x.com",
     "+.twimg.com",
     "+.t.co"
   ],
-  facebook: [
+  meta: [
     "+.facebook.com",
     "+.fbcdn.net",
     "+.fb.com",
     "+.facebook.net",
     "+.instagram.com",
-    "+.cdninstagram.com"
+    "+.cdninstagram.com",
+    "+.threads.net"      // Meta 旗下 Threads
   ],
+  reddit: [
+    "+.reddit.com",
+    "+.redditmedia.com",
+    "+.redditstatic.com"
+  ],
+  tiktok: [              // TikTok 海外版（与抖音 douyin.com 无关，不会触发境内分流）
+    "+.tiktok.com",
+    "+.tiktokcdn.com",
+    "+.tiktokv.com",
+    "+.ibyteimg.com"
+  ],
+  snapchat: [
+    "+.snapchat.com",
+    "+.snap.com",
+    "+.sc-cdn.net"
+  ],
+  pinterest: [
+    "+.pinterest.com",
+    "+.pinimg.com"
+  ],
+  bluesky: [
+    "+.bsky.app",
+    "+.bsky.social"
+  ],
+  tumblr: [
+    "+.tumblr.com",
+    "+.tumblr.media"
+  ],
+  long_form_writing: [
+    "+.medium.com",
+    "+.substack.com",
+    "+.patreon.com"
+  ],
+  niche_communities: [
+    "+.goodreads.com",     // 读书
+    "+.letterboxd.com"     // 电影日记
+  ],
+
+  // ---- 即时通讯 ----
   telegram: [
     "+.telegram.org",
     "+.t.me",
@@ -261,159 +568,309 @@ var SOURCE_MEDIA = {
     "+.discordapp.com",
     "+.discordapp.net",
     "+.discord.media"
+  ],
+  line: [                // LINE（日 / 韩 / 台主流 IM）
+    "+.line.me",
+    "+.line-apps.com",
+    "+.line-scdn.net",
+    "+.line-cdn.net"
+  ],
+  whatsapp: [            // WhatsApp（Meta 旗下，但放 IM 桶更直观）
+    "+.whatsapp.com",
+    "+.whatsapp.net"
+  ],
+  signal: [
+    "+.signal.org"
   ]
 };
 
-// ---------- Direct · 境内 AI（域内 DoH + 直连） ----------
-var SOURCE_DIRECT_DOMESTIC_AI = {
-  tongyi: [
-    "+.tongyi.aliyun.com",
-    "+.qianwen.aliyun.com",
-    "+.dashscope.aliyuncs.com"
-  ],
-  moonshot: [
-    "+.moonshot.cn"
-  ],
-  zhipu: [
-    "+.chatglm.cn",
-    "+.zhipuai.cn",
-    "+.bigmodel.cn"
-  ],
-  siliconflow: [
-    "+.siliconflow.cn"
+// ---------- CN Direct · 境内直连 ----------
+var SOURCE_CN_DIRECT = {
+  ai: {
+    tongyi: [
+      "+.tongyi.aliyun.com",
+      "+.qianwen.aliyun.com",
+      "+.dashscope.aliyuncs.com"
+    ],
+    moonshot: [
+      "+.moonshot.cn"
+    ],
+    zhipu: [
+      "+.chatglm.cn",
+      "+.zhipuai.cn",
+      "+.bigmodel.cn"
+    ],
+    siliconflow: [
+      "+.siliconflow.cn"
+    ],
+    deepseek: [
+      "+.deepseek.com"      // api / platform / chat 全部子域
+    ],
+    doubao: [
+      "+.doubao.com",       // 字节豆包
+      "+.volcengineapi.com" // 火山方舟（豆包模型 API）
+    ],
+    minimax: [
+      "+.minimaxi.com",     // MiniMax 域内域名
+      "+.hailuoai.com"      // 海螺 AI
+    ],
+    baichuan: [
+      "+.baichuan-ai.com"
+    ],
+    stepfun: [
+      "+.stepfun.com"       // 阶跃星辰
+    ]
+  },
+  office: {
+    tencent_messaging_and_collab: [
+      "+.qq.com",
+      "+.qqmail.com",
+      "+.exmail.qq.com",
+      "+.weixin.qq.com",
+      "+.work.weixin.qq.com",
+      "+.docs.qq.com",
+      "+.meeting.tencent.com"
+    ],
+    alibaba_productivity: [
+      "+.dingtalk.com",
+      "+.dingtalkapps.com",
+      "+.aliyundrive.com",
+      "+.quark.cn",
+      "+.teambition.com"
+    ],
+    bytedance_productivity: [
+      "+.feishu.cn",
+      "+.feishu.net",
+      "+.feishucdn.com",
+      "+.larksuite.com",
+      "+.larkoffice.com"
+    ],
+    wps_productivity: [
+      "+.wps.cn",
+      "+.wps.com",
+      "+.kdocs.cn",
+      "+.kdocs.com"
+    ]
+  },
+  cloud: {
+    alibaba_cloud: [
+      "+.aliyun.com",
+      "+.aliyuncs.com",
+      "+.alibabacloud.com"
+    ],
+    tencent_cloud: [
+      "+.tencentcloud.com",
+      "+.cloud.tencent.com",
+      "+.qcloud.com"
+    ],
+    bytedance_cloud: [
+      "+.volcengine.com",
+      "+.volces.com"
+    ],
+    huawei_cloud: [
+      "+.myhuaweicloud.com",
+      "+.huaweicloud.com",
+      "+.huaweicloud.cn"
+    ],
+    baidu_cloud_and_cdn: [
+      "+.baidubce.com",
+      "+.bcebos.com",
+      "+.bdstatic.com"
+    ],
+    jd_cloud: [
+      "+.jdcloud.com",
+      "+.jcloudcs.com"
+    ],
+    qiniu_cdn: [
+      "+.qiniu.com",
+      "+.qbox.me",
+      "+.qiniucdn.com"
+    ],
+    upyun: [
+      "+.upyun.com",
+      "+.upaiyun.com"
+    ],
+    wangsu_cdn: [
+      "+.wangsu.com",
+      "+.wscdns.com",
+      "+.wscloudcdn.com"
+    ],
+    ctyun: [
+      "+.ctyun.cn"
+    ],
+    ksyun: [
+      "+.ksyun.com"
+    ]
+  },
+  // 域内消费类高频站点；放 DIRECT 既走最近 CN CDN，也避免占用代理带宽。
+  consumer: {
+    baidu: [
+      "+.baidu.com",         // 搜索 / 网盘 / 地图统一入口
+      "+.bdimg.com"          // 百度图片站静态资源
+    ],
+    bilibili: [
+      "+.bilibili.com",
+      "+.hdslb.com",         // B 站全站静态 / 图片 CDN
+      "+.biliapi.net",
+      "+.biliapi.com",
+      "+.bilivideo.com",     // 视频流分发
+      "+.bilicdn1.com",
+      "+.biligame.com"
+    ],
+    weibo_and_sina: [
+      "+.weibo.com",
+      "+.weibo.cn",
+      "+.weibocdn.com",
+      "+.sinaimg.cn",        // Weibo 图片 / 视频 CDN
+      "+.sina.com.cn"
+    ],
+    zhihu: [
+      "+.zhihu.com",
+      "+.zhimg.com"          // 知乎静态资源
+    ],
+    xiaohongshu: [
+      "+.xiaohongshu.com",
+      "+.xhscdn.com"
+    ],
+    douyin_and_kuaishou: [
+      "+.douyin.com",        // 抖音（与海外 TikTok 不冲突）
+      "+.douyinpic.com",
+      "+.douyincdn.com",
+      "+.kuaishou.com",
+      "+.gifshow.com",       // 快手早期域 / 静态资源
+      "+.yximgs.com"         // 快手图片 CDN
+    ],
+    netease: [
+      "+.163.com",           // 含网易邮箱 / 网易云音乐 / 新闻
+      "+.126.com",
+      "+.netease.com"
+    ],
+    video_streaming: [
+      "+.iqiyi.com",
+      "+.iqiyipic.com",
+      "+.youku.com",
+      "+.mgtv.com",
+      "+.sohu.com"
+    ],
+    e_commerce: [
+      "+.taobao.com",
+      "+.tbcdn.cn",
+      "+.taobaocdn.com",
+      "+.tmall.com",
+      "+.jd.com",
+      "+.360buyimg.com",     // 京东图片 CDN
+      "+.pinduoduo.com",
+      "+.yangkeduo.com"      // 拼多多前端域
+    ],
+    local_services: [
+      "+.meituan.com",
+      "+.meituan.net",
+      "+.dianping.com"
+    ],
+    gaming: [
+      "+.mihoyo.com"         // 米哈游国服（原神 / 星穹铁道）；hoyoverse.com 走默认
+    ]
+  }
+};
+
+// ---------- Local Direct · 本地与推送直连 ----------
+var SOURCE_LOCAL_DIRECT = {
+  local_and_push: [
+    "+.push.apple.com",
+    "+.lan",
+    "+.local",
+    "+.localhost",
+    "+.home.arpa"          // RFC 8375 家庭网络保留域
   ]
 };
 
-// ---------- Direct · 境内办公协作（域内 DoH + 直连） ----------
-var SOURCE_DIRECT_DOMESTIC_OFFICE = {
-  tencent_messaging_and_collab: [
-    "+.qq.com",
-    "+.qqmail.com",
-    "+.exmail.qq.com",
-    "+.weixin.qq.com",
-    "+.work.weixin.qq.com",
-    "+.docs.qq.com",
-    "+.meeting.tencent.com",
-    "+.tencentcloud.com",
-    "+.cloud.tencent.com"
-  ],
-  alibaba_productivity: [
-    "+.dingtalk.com",
-    "+.dingtalkapps.com",
-    "+.aliyundrive.com",
-    "+.quark.cn",
-    "+.teambition.com",
-    "+.aliyun.com",
-    "+.aliyuncs.com",
-    "+.alibabacloud.com"
-  ],
-  bytedance_productivity: [
-    "+.feishu.cn",
-    "+.feishu.net",
-    "+.feishucdn.com",
-    "+.larksuite.com",
-    "+.larkoffice.com"
-  ],
-  wps_productivity: [
-    "+.wps.cn",
-    "+.wps.com",
-    "+.kdocs.cn",
-    "+.kdocs.com"
-  ]
-};
-
-// ---------- Direct · 域外应用（直连 + 域外 DoH + skip-domain） ----------
-var SOURCE_DIRECT_OVERSEAS_APPS = {
-  tailscale: [
-    "+.tailscale.com",
-    "+.tailscale.io",
-    "+.ts.net"
-  ],
-  typeless: [
-    "+.typeless.com"
-  ]
-};
-
-// ---------- Policy · AI 出口验证 ----------
-// 这些域名被刻意路由到 AI 家宽出口，用于核验出口 IP（ping0.cc / ipinfo.io）
-// 或覆盖 AI 常用的 CF CDN 子域（cdn.cloudflare.net）。它们同时通过 strict.all 参与
-// DNS overseas 解析与 fake-ip fallback 过滤。
-//
-// 注意：`+.cdn.cloudflare.net` 只覆盖 Cloudflare 官方基础设施子域（如 workers.dev 回源、R2），
-// 不会波及普通 CF 前置的第三方网站——第三方站点通常以自有域名 fronted，DNS 不命中
-// `cdn.cloudflare.net`。这是"为 AI 出口让路"的小范围策略，不会显著影响域内访问普通 CF 站点。
-var SOURCE_AI_EGRESS_VALIDATION = [
-  "+.cdn.cloudflare.net",
-  "+.ping0.cc",
-  "+.ipinfo.io"
-];
-
-// ---------- Policy · Sniffer 强制 / 跳过 ----------
-var SOURCE_SNIFFER_FORCE_BASE = [
-  "+.cloudflare.com",
-  "+.cdn.cloudflare.net"
-];
-var SOURCE_SNIFFER_SKIP_BASE = [
-  "+.push.apple.com",
-  "+.apple.com",
-  "+.lan",
-  "+.local",
-  "+.localhost"
-];
-
-// 原始进程分类，目前只维护 AI 与浏览器两类——两者最终都会路由到链式代理出口。
-var SOURCE_PROCESSES = {
-  chain: {
-    aiApps: {
-      apps: [
-        "Claude",
-        "ChatGPT",
-        "Perplexity",
-        "Cursor"
+// ---------- Overseas Direct · 域外 DoH + 直连 ----------
+var SOURCE_OVERSEAS_DIRECT = {
+  special: {
+    apple: {
+      core: [
+        "+.apple.com",
+        "+.icloud.com"
       ],
-      helperSuffixes: [
-        "Helper"
+      content: [
+        "+.icloud-content.com",
+        "+.mzstatic.com",
+        "+.cdn-apple.com",
+        "+.aaplimg.com"
       ],
-      exact: [
-        "ChatGPTHelper",
-        "Claude Helper (Renderer)",
-        "Claude Helper (GPU)",
-        "Claude Helper (Plugin)",
-        // macOS PROCESS-NAME 匹配 Bundle 可执行名，不含 `.app` 后缀。
-        // 未列入此处的应用：
-        //   - Claude Code / URL Handler 都以 `claude` 运行，统一通过 aiCli 命中。
-        //   - Antigravity 的 Bundle 可执行名是 `Electron`，无法按进程名精确匹配，改走域名规则。
-        "Quotio"
+      services: ["+.apple-cloudkit.com"]
+    },
+    egressCheck: {
+      core: [
+        "+.ping0.cc",
+        "+.ipinfo.io",
+        "+.ifconfig.me",     // 常用 curl 出口检测
+        "+.ip.sb"            // NextDNS 提供的快速出口查询
+      ]
+    }
+  },
+  global: {
+    cnApps: {
+      immersive_translate: [
+        "+.immersivetranslate.com"
+      ],
+      mineru: [
+        "+.mineru.org.cn",
+        "+.mineru.oss-cn-shanghai.aliyuncs.com"
       ]
     },
-    aiCli: ["claude", "gemini", "codex"],
-    browser: {
-      apps: [
-        "Dia",
-        "Atlas",
-        "Google Chrome",
-        "SunBrowser"
+    apps: {
+      tailscale: [
+        "+.tailscale.com",
+        "+.tailscale.io",
+        "+.ts.net"
       ],
-      helperSuffixes: [
-        "Helper",
-        "Helper (Renderer)",
-        "Helper (GPU)",
-        "Helper (Plugin)",
-        "Helper (Alerts)"
+      zerotier: [
+        "+.zerotier.com"     // ZeroTier P2P，定位与 Tailscale 类似
+      ],
+      plex: [
+        "+.plex.tv",
+        "+.plex.direct"      // Plex 客户端直连家用服务器走 plex.direct 通配子域
+      ],
+      synology: [
+        "+.synology.com",
+        "+.quickconnect.to"  // Synology QuickConnect 中继
+      ],
+      typeless: [
+        "+.typeless.com"
       ]
     }
   }
 };
 
-// 路由样本：声明"这些具体的域名 / 进程必须落到这个出口"。运行期 assertRuleTargetBatch
-// 逐条核对规则命中；加载期 assertExpectedRoutesCoverage 核对样本没有脱离 SOURCE_* 源数据；
-// `tests/validate.js` 直接读 sandbox.EXPECTED_ROUTES 作为端到端期望。
-// 更新时只改这一处，校验与测试同步跟进。
-//
+// ---------- Network Direct · 网络地址直连 ----------
+// 私有 / 链路本地 / CGNAT / Tailscale ULA 都走 DIRECT，避免被无意中走代理。
+var SOURCE_NETWORK_DIRECT = {
+  direct: [
+    // RFC 1918 私有网络
+    { type: "IP-CIDR", value: "10.0.0.0/8",        target: BASE.ruleTargets.direct },
+    { type: "IP-CIDR", value: "172.16.0.0/12",     target: BASE.ruleTargets.direct },
+    { type: "IP-CIDR", value: "192.168.0.0/16",    target: BASE.ruleTargets.direct },
+    // 链路本地
+    { type: "IP-CIDR", value: "169.254.0.0/16",    target: BASE.ruleTargets.direct },
+    // CGNAT (RFC 6598) + Tailscale magic IP
+    { type: "IP-CIDR", value: "100.64.0.0/10",     target: BASE.ruleTargets.direct },
+    { type: "IP-CIDR", value: "100.100.100.100/32", target: BASE.ruleTargets.direct },
+    // IPv6 ULA + 链路本地 + Tailscale ULA
+    { type: "IP-CIDR6", value: "fc00::/7",         target: BASE.ruleTargets.direct },
+    { type: "IP-CIDR6", value: "fe80::/10",        target: BASE.ruleTargets.direct },
+    { type: "IP-CIDR6", value: "fd7a:115c:a1e0::/48", target: BASE.ruleTargets.direct }
+  ]
+};
+
+// 端到端样本：声明"这些域名 / 进程必须落到这个出口"。
+//   - 加载期 assertExpectedRoutesCoverage：样本必须能在 SOURCE_* 中匹配。
+//   - 运行期 validateManagedRouting：每条样本规则的 target 必须正确。
+//   - tests/validate.js：直接读 sandbox.EXPECTED_ROUTES 当端到端期望。
 // 字段：
-//   domains       以 DOMAIN-SUFFIX 命中的裸域名
-//   processNames  始终注入的进程名（受管 App）
-//   cliNames      CLI 可执行名，仅当 shouldRouteAiCliToChain() 启用时校验
+//   domains       裸域名（DOMAIN-SUFFIX 命中）
+//   processNames  受管桌面 App 进程名
+//   cliNames      AI CLI 可执行名（固定走 chainRegion）
 var EXPECTED_ROUTES = {
   toChain: {
     domains: [
@@ -421,23 +878,27 @@ var EXPECTED_ROUTES = {
       "chatgpt.com",
       "gemini.google.com",
       "perplexity.ai",
-      "google.com"
+      "google.com",
+      "cursor.sh",             // Cursor 后端
+      "arkoselabs.com",        // Arkose 登录反机器人（integrations.antibot）
+      "stripe.com",            // AI 订阅支付（integrations.payments）
+      "statsig.com",           // feature flag（integrations.telemetry）
+      "githubusercontent.com", // GitHub 原始内容，GFW 下易污染
+      "npmjs.org"              // npm 官方 registry
     ],
     processNames: ["Claude"],
     cliNames: ["claude", "codex"]
   },
   toMedia: {
-    domains: ["youtube.com", "x.com"]
+    domains: [
+      "youtube.com",     // 视频流媒体
+      "x.com",           // 社交
+      "twitch.tv",       // 直播
+      "spotify.com",     // 音乐
+      "line.me",         // IM
+      "whatsapp.com"     // IM
+    ]
   }
-};
-
-// 原始网络地址规则，目前只覆盖直连（Tailscale CGNAT 网段、DNS 节点、Tailscale IPv6）。
-var SOURCE_NETWORK_RULES = {
-  direct: [
-    { type: "IP-CIDR", value: "100.64.0.0/10", target: BASE.ruleTargets.direct },
-    { type: "IP-CIDR", value: "100.100.100.100/32", target: BASE.ruleTargets.direct },
-    { type: "IP-CIDR6", value: "fd7a:115c:a1e0::/48", target: BASE.ruleTargets.direct }
-  ]
 };
 
 // ---------------------------------------------------------------------------
@@ -524,6 +985,12 @@ function toSuffix(domainPattern) {
     : domainPattern;
 }
 
+// ES5 安全的 `endsWith`：判断 str 是否以 suffix 结尾。
+function endsWithString(str, suffix) {
+  if (suffix.length > str.length) return false;
+  return str.lastIndexOf(suffix) === str.length - suffix.length;
+}
+
 // 把按类别分组的域名模式对象展平成单个数组并去重。
 function flattenGroupedPatterns(groupedPatterns) {
   var flattenedPatterns = [];
@@ -537,12 +1004,7 @@ function createUserError(message) {
   return new Error(message);
 }
 
-// 是否让常见 AI CLI 继续按应用名强制走 chainRegion。
-function shouldRouteAiCliToChain() {
-  return USER_OPTIONS.routeAiCliToChain !== false;
-}
-
-// 是否让受管浏览器继续按应用名强制走 chainRegion。
+// 是否让受管 AI 浏览器继续按应用名强制走 chainRegion。
 function shouldRouteBrowserToChain() {
   return USER_OPTIONS.routeBrowserToChain !== false;
 }
@@ -551,79 +1013,60 @@ function shouldRouteBrowserToChain() {
 // 策略表（POLICY）与派生分类
 // ---------------------------------------------------------------------------
 
-// POLICY 是所有域名模式的**单一权威来源**：每条 entry 同时声明路由、DNS 分区、
-// sniffer 行为、fake-ip 绕过、fallback-filter 归属。所有派生视图都从 POLICY 投影，
-// 避免"某域名在哪里被路由/走哪个 DoH/是否强制嗅探"的决策散落在多个 builder 里。
+// POLICY 是所有域名模式的**单一权威来源**：每条 entry 同时声明
+// 路由 / DNS 分区 / sniffer / fake-ip 绕过 / fallback-filter。
+// 下游 DNS、sniffer、规则、断言都只从 POLICY 投影，没有第二份决策。
 //
-// 条目字段：
-//   key          调试与断言用的稳定标识（唯一）
-//   patterns     `+.domain` 模式数组（已去重）
-//   route        "chain" | "media" | "direct"，省略表示无路由规则（仅 sniffer/DNS）
-//   routeBucket  可选子桶（如 "ai" / "support" / "validation" / "direct.domestic.ai"），
-//                保持 DNS 策略与规则段的细粒度
-//   dnsZone      "overseas" | "domestic"，省略则不进 nameserver-policy
-//   sniffer      "force" | "skip"，省略表示不参与 sniffer 配置
-//   fakeIpBypass true 表示进入 fake-ip-filter（解析真实 IP）
-//   fallbackFilter true 表示进入 DNS fallback-filter.domain
+// 字段：
+//   key            稳定标识（仅用于调试与报错）
+//   patterns       `+.domain` 模式数组（已去重）
+//   route          "chain" | "media" | "direct"，省略 = 不生成路由规则
+//   dnsZone        "overseas" | "domestic"，省略 = 不进 nameserver-policy
+//   sniffer        "force" | "skip"，省略 = 不参与 sniffer 配置
+//   fakeIpBypass   true = 进入 fake-ip-filter（解析真实 IP）
+//   fallbackFilter true = 进入 DNS fallback-filter.domain
 //
-// 冲突解决：同一 pattern 若同时出现在 direct 条目与 chain/media 条目中，direct 胜出
-// （route 规则生成时 chain/media 会 excludeStrings(directAll)）。
+// 冲突解决：同一 pattern 既出现在 direct 又出现在 chain/media 时，direct 胜出
+// （chain/media 派生时 excludeStrings(direct)）。
 function buildPolicy() {
   return [
-    {
-      key: "apple", patterns: flattenGroupedPatterns(SOURCE_APPLE),
-      dnsZone: "domestic", fakeIpBypass: true
-    },
+    // ---- chain · 走家宽出口 ----
+    { key: "chain.support",      patterns: flattenGroupedPatterns(SOURCE_CHAIN.support),
+      route: "chain", dnsZone: "overseas", sniffer: "force", fallbackFilter: true },
+    { key: "chain.ai",           patterns: flattenGroupedPatterns(SOURCE_CHAIN.ai),
+      route: "chain", dnsZone: "overseas", sniffer: "force", fallbackFilter: true },
+    { key: "chain.integrations", patterns: flattenGroupedPatterns(SOURCE_CHAIN.integrations),
+      route: "chain", dnsZone: "overseas", sniffer: "force", fallbackFilter: true },
+    { key: "chain.cloudflare",   patterns: flattenGroupedPatterns(SOURCE_CHAIN.force),
+      route: "chain", dnsZone: "overseas", sniffer: "force", fallbackFilter: true },
 
-    {
-      key: "chain.support", patterns: flattenGroupedPatterns(SOURCE_CHAIN_PLATFORM),
-      route: "chain", routeBucket: "support",
-      dnsZone: "overseas", sniffer: "force", fallbackFilter: true
-    },
-    {
-      key: "chain.ai", patterns: flattenGroupedPatterns(SOURCE_CHAIN_AI),
-      route: "chain", routeBucket: "ai",
-      dnsZone: "overseas", sniffer: "force", fallbackFilter: true
-    },
-    {
-      key: "chain.validation",
-      patterns: uniqueStrings(SOURCE_AI_EGRESS_VALIDATION.slice()),
-      route: "chain", routeBucket: "validation",
-      dnsZone: "overseas", sniffer: "force", fallbackFilter: true
-    },
+    // ---- media · 走媒体地区组 ----
+    { key: "media", patterns: flattenGroupedPatterns(SOURCE_MEDIA),
+      route: "media", dnsZone: "overseas", fallbackFilter: true },
 
-    {
-      key: "media", patterns: flattenGroupedPatterns(SOURCE_MEDIA),
-      route: "media", dnsZone: "overseas", fallbackFilter: true
-    },
+    // ---- 默认代理（不写 route，仅做 DNS / fallback-filter）----
+    { key: "default.overseasCloudCdn", patterns: flattenGroupedPatterns(SOURCE_GLOBAL_DEFAULT.cloud),
+      dnsZone: "overseas", fallbackFilter: true },
 
-    {
-      key: "direct.overseasApps",
-      patterns: flattenGroupedPatterns(SOURCE_DIRECT_OVERSEAS_APPS),
-      route: "direct", routeBucket: "direct.overseasApps",
-      dnsZone: "overseas", sniffer: "skip", fallbackFilter: true
-    },
-    {
-      key: "direct.domestic.ai",
-      patterns: flattenGroupedPatterns(SOURCE_DIRECT_DOMESTIC_AI),
-      route: "direct", routeBucket: "direct.domestic.ai", dnsZone: "domestic"
-    },
-    {
-      key: "direct.domestic.office",
-      patterns: flattenGroupedPatterns(SOURCE_DIRECT_DOMESTIC_OFFICE),
-      route: "direct", routeBucket: "direct.domestic.office", dnsZone: "domestic"
-    },
-
-    {
-      key: "sniffer.force.base",
-      patterns: uniqueStrings(SOURCE_SNIFFER_FORCE_BASE.slice()),
-      sniffer: "force"
-    },
-    {
-      key: "sniffer.skip.base",
-      patterns: uniqueStrings(SOURCE_SNIFFER_SKIP_BASE.slice()),
-      sniffer: "skip"
-    }
+    // ---- direct · 直连 ----
+    { key: "direct.apple",       patterns: flattenGroupedPatterns(SOURCE_OVERSEAS_DIRECT.special.apple),
+      route: "direct", dnsZone: "overseas", fakeIpBypass: true },
+    { key: "direct.egressCheck", patterns: flattenGroupedPatterns(SOURCE_OVERSEAS_DIRECT.special.egressCheck),
+      route: "direct", dnsZone: "overseas", fallbackFilter: true },
+    { key: "direct.overseasApps", patterns: flattenGroupedPatterns(SOURCE_OVERSEAS_DIRECT.global.apps),
+      route: "direct", dnsZone: "overseas", sniffer: "skip", fallbackFilter: true },
+    { key: "direct.cnAppsOverseasDoh", patterns: flattenGroupedPatterns(SOURCE_OVERSEAS_DIRECT.global.cnApps),
+      route: "direct", dnsZone: "overseas", sniffer: "skip", fallbackFilter: true },
+    { key: "direct.cn.ai",       patterns: flattenGroupedPatterns(SOURCE_CN_DIRECT.ai),
+      route: "direct", dnsZone: "domestic" },
+    { key: "direct.cn.office",   patterns: flattenGroupedPatterns(SOURCE_CN_DIRECT.office),
+      route: "direct", dnsZone: "domestic" },
+    { key: "direct.cn.cloud",    patterns: flattenGroupedPatterns(SOURCE_CN_DIRECT.cloud),
+      route: "direct", dnsZone: "domestic" },
+    { key: "direct.cn.consumer", patterns: flattenGroupedPatterns(SOURCE_CN_DIRECT.consumer),
+      route: "direct", dnsZone: "domestic" },
+    { key: "direct.localAndPush", patterns: flattenGroupedPatterns(SOURCE_LOCAL_DIRECT),
+      route: "direct", dnsZone: "domestic", sniffer: "skip" }
   ];
 }
 
@@ -645,94 +1088,56 @@ function projectPolicyPatterns(predicate) {
   return uniqueStrings(result);
 }
 
-// 常用断言工厂，命名化以替代匿名函数。
-function matchRouteBucket(bucket) {
-  return function (entry) { return entry.routeBucket === bucket; };
-}
+// POLICY 谓词工厂。
 function matchRoute(route) {
   return function (entry) { return entry.route === route; };
 }
 function matchSniffer(mode) {
   return function (entry) { return entry.sniffer === mode; };
 }
-function matchSnifferOnly(mode) {
-  return function (entry) { return entry.sniffer === mode && !entry.route; };
-}
 function matchFakeIpBypass(entry) { return entry.fakeIpBypass === true; }
 function matchFallbackFilter(entry) { return entry.fallbackFilter === true; }
 
-// 从 POLICY 投影派生 `patterns` 视图。保留既有消费者的字段路径以免改动调用侧。
+// 从 POLICY 投影出下游真正消费的三类域名集合：
+//   chain    → 进家宽出口（排除被 direct 抢占的模式）
+//   media    → 媒体地区组
+//   direct   → 全量 DIRECT 模式，用于生成直连规则与 fake-ip/sniffer 判断
+//   sniffer  → force / skip 两侧的嗅探决策
+//   fakeIpBypass → 需要返回真实 IP 的域名（Apple 等）
 function buildDerivedPatterns() {
-  var directAll = projectPolicyPatterns(matchRoute("direct"));
-
-  function strictBucket(bucket) {
-    return excludeStrings(projectPolicyPatterns(matchRouteBucket(bucket)), directAll);
-  }
-  var strict = {
-    ai: strictBucket("ai"),
-    support: strictBucket("support"),
-    validation: strictBucket("validation")
-  };
-  strict.all = mergeStringGroups([strict.ai, strict.support, strict.validation]);
-
-  var general = {
-    media: excludeStrings(projectPolicyPatterns(matchRoute("media")), directAll)
-  };
-
-  var directDomesticAi = projectPolicyPatterns(matchRouteBucket("direct.domestic.ai"));
-  var directDomesticOffice = projectPolicyPatterns(matchRouteBucket("direct.domestic.office"));
-  var directOverseasApps = projectPolicyPatterns(matchRouteBucket("direct.overseasApps"));
-  var directDomesticGroups = [directDomesticAi, directDomesticOffice];
-  var directGroups = directDomesticGroups.concat([directOverseasApps]);
-
-  // sniffer.force 与 strict.all 有语义重叠：chain 条目默认参与强制嗅探，但这些
-  // 模式已被 direct 排除后存在于 strict.all 中。额外再并入"仅 sniffer"条目。
-  var sniffer = {
-    force: mergeStringGroups([projectPolicyPatterns(matchSnifferOnly("force")), strict.all]),
-    skip: projectPolicyPatterns(matchSniffer("skip"))
-  };
-
+  var direct = projectPolicyPatterns(matchRoute("direct"));
+  var chain = excludeStrings(projectPolicyPatterns(matchRoute("chain")), direct);
+  var media = excludeStrings(projectPolicyPatterns(matchRoute("media")), direct);
   return {
-    apple: projectPolicyPatterns(matchFakeIpBypass),
-    direct: {
-      domestic: { ai: directDomesticAi, office: directDomesticOffice, groups: directDomesticGroups },
-      overseasApps: directOverseasApps,
-      groups: directGroups
-    },
-    strict: strict,
-    general: general,
-    sniffer: sniffer
+    chain: chain,
+    media: media,
+    direct: direct,
+    fakeIpBypass: projectPolicyPatterns(matchFakeIpBypass),
+    sniffer: {
+      // chain 条目默认强制嗅探；额外合入所有 sniffer=force 的条目以覆盖不走 chain 的纯嗅探项。
+      force: mergeStringGroups([chain, projectPolicyPatterns(matchSniffer("force"))]),
+      skip: projectPolicyPatterns(matchSniffer("skip"))
+    }
   };
 }
 
-// 从 SOURCE_PROCESSES 展开出"严格 AI"和"链式浏览器"两类进程入口。
+// 从 SOURCE_CHAIN.apps 展开出三类进程入口：
+//   aiApps  → 受管 AI 桌面 App + 显式 helper（始终走 chainRegion）
+//   aiCli   → AI 命令行（始终走 chainRegion）
+//   browser → AI 浏览器 + 全部 helper（按 USER_OPTIONS.routeBrowserToChain 决定是否走 chainRegion）
 function buildDerivedProcessNames() {
-  var processNames = {
-    ai: {
-      apps: expandProcessNamesWithHelpers(
-        SOURCE_PROCESSES.chain.aiApps.apps,
-        SOURCE_PROCESSES.chain.aiApps.helperSuffixes,
-        SOURCE_PROCESSES.chain.aiApps.exact
-      ),
-      cli: uniqueStrings(SOURCE_PROCESSES.chain.aiCli.slice())
-    },
-    browser: {
-      all: expandProcessNamesWithHelpers(
-        SOURCE_PROCESSES.chain.browser.apps,
-        SOURCE_PROCESSES.chain.browser.helperSuffixes
-      )
-    }
+  return {
+    aiApps: expandProcessNamesWithHelpers(
+      SOURCE_CHAIN.apps.ai.apps,
+      SOURCE_CHAIN.apps.ai.helperSuffixes,
+      SOURCE_CHAIN.apps.ai.exact
+    ),
+    aiCli: uniqueStrings(SOURCE_CHAIN.apps.ai.cli.slice()),
+    browser: expandProcessNamesWithHelpers(
+      SOURCE_CHAIN.apps.browser.apps,
+      SOURCE_CHAIN.apps.browser.helperSuffixes
+    )
   };
-
-  processNames.strict = {
-    base: processNames.ai.apps,
-    optionalAiCli: processNames.ai.cli
-  };
-  processNames.general = {
-    browser: processNames.browser.all
-  };
-
-  return processNames;
 }
 
 // DERIVED 是后续执行函数唯一应直接消费的派生入口。
@@ -740,7 +1145,7 @@ var DERIVED = {
   patterns: buildDerivedPatterns(),
   processNames: buildDerivedProcessNames(),
   networkRules: {
-    direct: SOURCE_NETWORK_RULES.direct.slice()
+    direct: SOURCE_NETWORK_DIRECT.direct.slice()
   }
 };
 
@@ -749,13 +1154,7 @@ function isDomainCoveredBySuffixPatterns(domain, suffixPatterns) {
   for (var i = 0; i < suffixPatterns.length; i++) {
     var suffix = toSuffix(suffixPatterns[i]);
     if (domain === suffix) return true;
-    var tail = "." + suffix;
-    if (
-      domain.length > tail.length &&
-      domain.lastIndexOf(tail) === domain.length - tail.length
-    ) {
-      return true;
-    }
+    if (endsWithString(domain, "." + suffix)) return true;
   }
   return false;
 }
@@ -767,26 +1166,26 @@ function assertExpectedRoutesCoverage() {
 
   for (i = 0; i < EXPECTED_ROUTES.toChain.domains.length; i++) {
     sample = EXPECTED_ROUTES.toChain.domains[i];
-    if (!isDomainCoveredBySuffixPatterns(sample, DERIVED.patterns.strict.all)) {
-      throw createUserError("route 样本未被 strict 源覆盖: " + sample);
+    if (!isDomainCoveredBySuffixPatterns(sample, DERIVED.patterns.chain)) {
+      throw createUserError("toChain 样本未被 chain 源覆盖: " + sample);
     }
   }
 
   for (i = 0; i < EXPECTED_ROUTES.toMedia.domains.length; i++) {
     sample = EXPECTED_ROUTES.toMedia.domains[i];
-    if (!isDomainCoveredBySuffixPatterns(sample, DERIVED.patterns.general.media)) {
-      throw createUserError("route 样本未被 media 源覆盖: " + sample);
+    if (!isDomainCoveredBySuffixPatterns(sample, DERIVED.patterns.media)) {
+      throw createUserError("toMedia 样本未被 media 源覆盖: " + sample);
     }
   }
 
-  var strictProcLookup = buildStringLookup(
-    DERIVED.processNames.strict.base.concat(DERIVED.processNames.strict.optionalAiCli)
+  var procLookup = buildStringLookup(
+    DERIVED.processNames.aiApps.concat(DERIVED.processNames.aiCli)
   );
   var procSamples = EXPECTED_ROUTES.toChain.processNames
     .concat(EXPECTED_ROUTES.toChain.cliNames);
   for (i = 0; i < procSamples.length; i++) {
-    if (!strictProcLookup[procSamples[i]]) {
-      throw createUserError("route 样本进程未在 strict 源中: " + procSamples[i]);
+    if (!procLookup[procSamples[i]]) {
+      throw createUserError("toChain 样本进程未在 SOURCE_CHAIN.apps 中: " + procSamples[i]);
     }
   }
 }
@@ -805,15 +1204,9 @@ function buildValidationTargets(ruleType, values) {
 // 校验目标从 `EXPECTED_ROUTES.toChain` 派生，避免校验与源数据脱钩。
 function buildStrictValidationTargets() {
   var samples = EXPECTED_ROUTES.toChain;
-  var validationTargets = buildValidationTargets("DOMAIN-SUFFIX", samples.domains)
-    .concat(buildValidationTargets("PROCESS-NAME", samples.processNames));
-  if (shouldRouteAiCliToChain()) {
-    // Claude Code CLI 与 URL Handler 都以 `claude` 可执行名运行，开关一旦关闭校验也随之撤销。
-    validationTargets = validationTargets.concat(
-      buildValidationTargets("PROCESS-NAME", samples.cliNames)
-    );
-  }
-  return validationTargets;
+  return buildValidationTargets("DOMAIN-SUFFIX", samples.domains)
+    .concat(buildValidationTargets("PROCESS-NAME", samples.processNames))
+    .concat(buildValidationTargets("PROCESS-NAME", samples.cliNames));
 }
 
 // 校验媒体域名是否命中独立媒体组选区。
@@ -825,7 +1218,7 @@ function buildMediaValidationTargets() {
 function buildBrowserValidationTargets() {
   if (!shouldRouteBrowserToChain()) return [];
   var targets = [];
-  var apps = SOURCE_PROCESSES.chain.browser.apps;
+  var apps = SOURCE_CHAIN.apps.browser.apps;
   for (var i = 0; i < apps.length; i++) {
     targets.push({ type: "PROCESS-NAME", value: apps[i] });
   }
@@ -842,40 +1235,21 @@ function writeDnsAndSniffer(config, derived) {
   config.sniffer = buildSnifferConfig(derived);
 }
 
-// 把一组域名统一绑定到同一套 DoH 服务器。
-function assignNameserverPolicyDomains(policy, domains, dohServers) {
-  for (var i = 0; i < domains.length; i++) {
-    policy[domains[i]] = dohServers;
-  }
-}
-
-// 把派生字段路径按 DNS 分区收拢到一张表；新增类别只需在这里加一行，无需动循环逻辑。
-// zone: "overseas" = 域外 DoH，"domestic" = 域内 DoH。
-function buildNameserverPolicyTable(patterns) {
-  return [
-    { source: patterns.strict.support, zone: "overseas", note: "严格支撑平台" },
-    { source: patterns.strict.ai, zone: "overseas", note: "AI 服务" },
-    { source: patterns.strict.validation, zone: "overseas", note: "出口验证域名" },
-    { source: patterns.general.media, zone: "overseas", note: "媒体组选区" },
-    { source: patterns.direct.overseasApps, zone: "overseas", note: "域外直连应用" },
-    { source: patterns.apple, zone: "domestic", note: "Apple 服务" },
-    { source: patterns.direct.domestic.ai, zone: "domestic", note: "域内 AI" },
-    { source: patterns.direct.domestic.office, zone: "domestic", note: "域内办公软件" }
-  ];
-}
-
-// 构建不同域名分类对应的 `nameserver-policy` 映射。
-function buildNameserverPolicy(derived) {
+// 遍历 POLICY，按 `dnsZone` 把每条 entry 的模式绑到对应 DoH。
+// 新增类别时只需在 POLICY 里给新条目加 `dnsZone` 字段，这里无需改动。
+function buildNameserverPolicy() {
   var dohByZone = { overseas: BASE.dns.overseas, domestic: BASE.dns.domestic };
   var policy = {};
   policy[BASE.dns.openaiGeosite] = dohByZone.overseas;
 
-  var table = buildNameserverPolicyTable(derived.patterns);
-  for (var i = 0; i < table.length; i++) {
-    var entry = table[i];
-    var dohServers = dohByZone[entry.zone];
-    if (!dohServers) throw createUserError("nameserver-policy 未知 zone: " + entry.zone);
-    assignNameserverPolicyDomains(policy, entry.source, dohServers);
+  for (var i = 0; i < POLICY.length; i++) {
+    var entry = POLICY[i];
+    if (!entry.dnsZone) continue;
+    var dohServers = dohByZone[entry.dnsZone];
+    if (!dohServers) throw createUserError("nameserver-policy 未知 zone: " + entry.dnsZone);
+    for (var j = 0; j < entry.patterns.length; j++) {
+      policy[entry.patterns[j]] = dohServers;
+    }
   }
 
   return policy;
@@ -887,6 +1261,7 @@ function buildNameserverPolicy(derived) {
 // 因为 `+.` 不支持中段通配。
 function buildDnsFakeIpFilter(derived) {
   var localNetworkDomains = [
+    "+.push.apple.com",
     "+.lan",
     "+.local",
     "+.localhost",
@@ -930,29 +1305,21 @@ function buildDnsFakeIpFilter(derived) {
   return localNetworkDomains
     .concat(timeSyncDomains)
     .concat(connectivityTestDomains)
-    .concat(derived.patterns.apple)
+    .concat(derived.patterns.fakeIpBypass)
     .concat(gamingRealtimeDomains)
     .concat(stunRealtimeDomains)
     .concat(homeRouterDomains);
 }
 
-// 构建 `fallback-filter` 使用的域名匹配列表，覆盖 AI 家宽、媒体组选区和域外直连应用。
-function buildDnsFallbackFilterDomains(derived) {
-  return mergeStringGroups([
-    derived.patterns.strict.all,
-    derived.patterns.general.media,
-    derived.patterns.direct.overseasApps
-  ]);
-}
-
-// 构建 Clash DNS 的 `fallback-filter` 配置对象。
-function buildDnsFallbackFilter(derived) {
+// 所有标记 fallbackFilter 的 POLICY 模式都进 fallback-filter.domain；
+// 配 `geoip-code: CN`，让境内 IP 走 nameserver、其余走 fallback DoH。
+function buildDnsFallbackFilter() {
   return {
     geoip: true,
     "geoip-code": "CN",
     geosite: ["gfw"],
     ipcidr: ["240.0.0.0/4", "0.0.0.0/32"],
-    domain: buildDnsFallbackFilterDomains(derived)
+    domain: projectPolicyPatterns(matchFallbackFilter)
   };
 }
 
@@ -978,8 +1345,8 @@ function buildDnsBaseConfig() {
 function buildDnsConfig(derived) {
   var dnsConfig = buildDnsBaseConfig();
   dnsConfig["fake-ip-filter"] = buildDnsFakeIpFilter(derived);
-  dnsConfig["fallback-filter"] = buildDnsFallbackFilter(derived);
-  dnsConfig["nameserver-policy"] = buildNameserverPolicy(derived);
+  dnsConfig["fallback-filter"] = buildDnsFallbackFilter();
+  dnsConfig["nameserver-policy"] = buildNameserverPolicy();
   return dnsConfig;
 }
 
@@ -1028,7 +1395,7 @@ function resolveRegionMeta(region, allowFallbackRegionLabel) {
 
 // 按旗帜、地区标签和后缀拼出代理组名称。
 function buildRegionGroupName(regionMeta, groupNameSuffix) {
-  return regionMeta.flag + "|" + regionMeta.label + groupNameSuffix;
+  return regionMeta.flag + regionMeta.label + groupNameSuffix;
 }
 
 // 根据凭证和端点信息生成一个 MiyaIP HTTP 代理节点。
@@ -1111,49 +1478,20 @@ function upsertRegionUrlTestGroup(proxyGroups, groupName, regionNodeNames) {
   });
 }
 
-// 把当前脚本生成的地区代理组同步进 `节点选择`，并剔除旧同类组。
+// 把脚本生成的地区组写入 `节点选择`，同时剔除带相同后缀的旧地区组（防止地区切换后残留）。
 function writeManagedGroupIntoNodeSelection(config, managedGroupName, managedGroupSuffix) {
   var nodeSelectionGroup = findProxyGroupByName(config["proxy-groups"], BASE.groupNames.nodeSelection);
   if (!nodeSelectionGroup || !nodeSelectionGroup.proxies) return;
 
   var nextProxyNames = [];
-  var i;
-  var proxyName;
-  var managedSuffixIndex;
-
-  for (i = 0; i < nodeSelectionGroup.proxies.length; i++) {
-    proxyName = nodeSelectionGroup.proxies[i];
-    managedSuffixIndex = proxyName.lastIndexOf(managedGroupSuffix);
-    if (proxyName === managedGroupName) continue;
-    if (
-      managedSuffixIndex >= 0 &&
-      managedSuffixIndex === proxyName.length - managedGroupSuffix.length
-    ) {
-      continue;
-    }
-    nextProxyNames.push(proxyName);
+  for (var i = 0; i < nodeSelectionGroup.proxies.length; i++) {
+    var name = nodeSelectionGroup.proxies[i];
+    if (name === managedGroupName) continue;
+    if (endsWithString(name, managedGroupSuffix)) continue;
+    nextProxyNames.push(name);
   }
-
   nextProxyNames.push(managedGroupName);
   nodeSelectionGroup.proxies = uniqueStrings(nextProxyNames);
-}
-
-// 把当前地区的链式代理跳板组同步进 `节点选择`。
-function writeRelayIntoNodeSelection(config, relayGroupName) {
-  writeManagedGroupIntoNodeSelection(
-    config,
-    relayGroupName,
-    BASE.groupNameSuffixes.relay
-  );
-}
-
-// 把当前地区的媒体组选区同步进 `节点选择`。
-function writeMediaIntoNodeSelection(config, mediaGroupName) {
-  writeManagedGroupIntoNodeSelection(
-    config,
-    mediaGroupName,
-    BASE.groupNameSuffixes.media
-  );
 }
 
 // 向主配置注入家宽出口和官方中转两个 MiyaIP 节点。
@@ -1190,30 +1528,63 @@ function writeRegionGroup(config, region, groupNameSuffix) {
   return groupName;
 }
 
-// 解析家宽链式代理前一跳应使用的脚本跳板组。
-function resolveRelayTarget(config, region) {
-  var relayTarget = writeRegionGroup(config, region, BASE.groupNameSuffixes.relay);
-  if (!relayTarget) {
-    throw createUserError(
-      "未找到可用的 " +
-      region +
-      " 节点，请检查 chainRegion 是否与订阅地区一致"
-    );
+// 按"首选地区 + fallback 顺序"生成实际尝试列表，首位永远保留用户首选。
+function buildRegionResolutionOrder(primaryRegion, fallbackRegions) {
+  var orderedRegions = [normalizeRegionKey(primaryRegion)];
+  var i;
+  var regionKey;
+  for (i = 0; i < fallbackRegions.length; i++) {
+    regionKey = normalizeRegionKey(fallbackRegions[i]);
+    if (orderedRegions.indexOf(regionKey) >= 0) continue;
+    orderedRegions.push(regionKey);
   }
-  return relayTarget;
+  return orderedRegions;
 }
 
-// 解析媒体应使用的普通地区组。
-function resolveMediaTarget(config, region) {
-  var mediaTarget = writeRegionGroup(config, region, BASE.groupNameSuffixes.media);
-  if (!mediaTarget) {
-    throw createUserError(
-      "未找到可用的 " +
-      region +
-      " 媒体节点，请检查 mediaRegion 是否与订阅地区一致"
-    );
+// 按顺序尝试地区组，命中后返回实际地区与组名。
+function resolveRegionGroupTarget(config, primaryRegion, fallbackRegions, groupNameSuffix, targetLabel) {
+  var resolutionOrder = buildRegionResolutionOrder(primaryRegion, fallbackRegions);
+  var i;
+  var regionKey;
+  var groupName;
+
+  for (i = 0; i < resolutionOrder.length; i++) {
+    regionKey = resolutionOrder[i];
+    groupName = writeRegionGroup(config, regionKey, groupNameSuffix);
+    if (groupName) {
+      return { region: regionKey, target: groupName };
+    }
   }
-  return mediaTarget;
+
+  throw createUserError(
+    "未找到可用的 " +
+    targetLabel +
+    "，已按顺序尝试 " +
+    resolutionOrder.join(" / ") +
+    "，请检查订阅地区节点与命名"
+  );
+}
+
+// 解析家宽链式代理前一跳应使用的脚本跳板组；首选缺失时自动按 fallback 顺序回退。
+function resolveRelayTarget(config, region) {
+  return resolveRegionGroupTarget(
+    config,
+    region,
+    BASE.regionFallbackOrder.chain,
+    BASE.groupNameSuffixes.relay,
+    "chainRegion 节点"
+  );
+}
+
+// 解析媒体应使用的普通地区组；首选缺失时自动按 fallback 顺序回退。
+function resolveMediaTarget(config, region) {
+  return resolveRegionGroupTarget(
+    config,
+    region,
+    BASE.regionFallbackOrder.media,
+    BASE.groupNameSuffixes.media,
+    "mediaRegion 媒体节点"
+  );
 }
 
 // 给家宽出口节点绑定拨号前置代理，并清理官方中转节点的拨号代理。
@@ -1248,16 +1619,18 @@ function writeChainGroup(config, region) {
 // 统一解析本轮注入所需的关键目标，减少主流程里的状态分散。
 // 这里会同时收敛链式跳板、AI 家宽出口和媒体组选区。
 function resolveRoutingTargets(config, chainRegion, mediaRegion) {
-  var relayTarget = resolveRelayTarget(config, chainRegion);
-  writeRelayIntoNodeSelection(config, relayTarget);
-  var chainGroupName = writeChainGroup(config, chainRegion);
-  var mediaTarget = resolveMediaTarget(config, mediaRegion);
-  writeMediaIntoNodeSelection(config, mediaTarget);
+  var relayResolution = resolveRelayTarget(config, chainRegion);
+  writeManagedGroupIntoNodeSelection(config, relayResolution.target, BASE.groupNameSuffixes.relay);
+  var chainGroupName = writeChainGroup(config, relayResolution.region);
+  var mediaResolution = resolveMediaTarget(config, mediaRegion);
+  writeManagedGroupIntoNodeSelection(config, mediaResolution.target, BASE.groupNameSuffixes.media);
   return {
-    relayTarget: relayTarget,
+    relayTarget: relayResolution.target,
+    relayRegion: relayResolution.region,
     chainGroupName: chainGroupName,
     strictAiTarget: chainGroupName,
-    mediaTarget: mediaTarget
+    mediaTarget: mediaResolution.target,
+    mediaRegion: mediaResolution.region
   };
 }
 
@@ -1304,13 +1677,14 @@ function dedupeRulesByIdentity(ruleLines) {
   return deduped;
 }
 
-// 按固定优先级拼出直连保留项、严格 AI 规则、链式浏览器规则和媒体组选区规则。
+// 按固定优先级拼出严格 AI 规则、媒体组选区、直连保留项和链式浏览器规则。
+// 浏览器进程规则刻意放在媒体 / 直连域名规则之后，避免受管浏览器压过这些更具体的匹配。
 // 段内各自去重，段间顺序即优先级——首次出现的目标胜出。
 function buildManagedRules(strictAiTarget, mediaTarget, derived) {
   var concatenated = buildStrictChainRules(strictAiTarget, derived)
-    .concat(buildBrowserChainRules(strictAiTarget, derived))
     .concat(buildMediaRules(mediaTarget, derived))
-    .concat(buildDirectRules(derived));
+    .concat(buildDirectRules(derived))
+    .concat(buildBrowserChainRules(strictAiTarget, derived));
   return dedupeRulesByIdentity(concatenated);
 }
 
@@ -1367,16 +1741,6 @@ function writeManagedRules(
   config.rules = managedRules.concat(split.nonMatch).concat(split.matchTail);
 }
 
-// 追加一批原生规则项，可附带额外参数，例如 `no-resolve`。最终去重由 `dedupeRulesByIdentity` 在段后统一处理。
-function appendRawRules(ruleLines, rawRules) {
-  for (var i = 0; i < rawRules.length; i++) {
-    var rawRule = rawRules[i];
-    var ruleLine = rawRule.type + "," + rawRule.value + "," + rawRule.target;
-    if (rawRule.option) ruleLine += "," + rawRule.option;
-    ruleLines.push(ruleLine);
-  }
-}
-
 // 批量追加指定类型规则。
 function appendTypedRules(ruleLines, values, ruleType, target) {
   for (var i = 0; i < values.length; i++) {
@@ -1398,33 +1762,30 @@ function appendProcessRules(ruleLines, processNames, target) {
   appendTypedRules(ruleLines, processNames, "PROCESS-NAME", target);
 }
 
-// 按当前用户选项返回应纳入严格 AI 路由的进程分组。
+// 返回应纳入严格 AI 路由的进程分组；AI CLI 固定走 chainRegion。
 function buildStrictProcessGroups(derived) {
-  var processGroups = [derived.processNames.strict.base];
-  if (shouldRouteAiCliToChain()) {
-    processGroups.push(derived.processNames.strict.optionalAiCli);
-  }
-  return processGroups;
+  return [derived.processNames.aiApps, derived.processNames.aiCli];
 }
 
 // 按当前用户选项返回应纳入链式代理的浏览器进程分组。
 function buildBrowserChainProcessGroups(derived) {
   if (!shouldRouteBrowserToChain()) return [];
-  return [derived.processNames.general.browser];
+  return [derived.processNames.browser];
 }
 
-// 统一生成严格 AI 路由规则。段内不去重——跨段去重由 `buildManagedRules` 末端统一完成。
+// 生成进家宽出口的所有规则：受管 AI 进程 + AI CLI + 全部 chain 域名。
+// 段内不去重——跨段去重由 `buildManagedRules` 末端统一完成。
 function buildStrictChainRules(strictAiTarget, derived) {
   var ruleLines = [];
   var processGroups = buildStrictProcessGroups(derived);
   for (var i = 0; i < processGroups.length; i++) {
     appendProcessRules(ruleLines, processGroups[i], strictAiTarget);
   }
-  appendSuffixRules(ruleLines, derived.patterns.strict.all, strictAiTarget);
+  appendSuffixRules(ruleLines, derived.patterns.chain, strictAiTarget);
   return ruleLines;
 }
 
-// 生成链式浏览器规则，承载按应用名强制分流的浏览器进程。
+// 生成链式浏览器规则，承载按应用名强制分流的 AI 浏览器进程。
 function buildBrowserChainRules(browserTarget, derived) {
   var ruleLines = [];
   var processGroups = buildBrowserChainProcessGroups(derived);
@@ -1437,30 +1798,18 @@ function buildBrowserChainRules(browserTarget, derived) {
 // 生成媒体组选区规则，只承载媒体域名。
 function buildMediaRules(mediaTarget, derived) {
   var ruleLines = [];
-  appendSuffixRules(ruleLines, derived.patterns.general.media, mediaTarget);
+  appendSuffixRules(ruleLines, derived.patterns.media, mediaTarget);
   return ruleLines;
 }
 
-// 生成域内直连、域外应用直连和网络地址直连规则。
+// 生成所有 DIRECT 规则：固定 IP-CIDR 网段（带 `no-resolve`）+ 全部 direct 模式。
 function buildDirectRules(derived) {
   var ruleLines = [];
-  var directNetworkRules = [];
-  var directPatternGroups = derived.patterns.direct.groups;
-  var i;
-
-  for (i = 0; i < derived.networkRules.direct.length; i++) {
-    directNetworkRules.push({
-      type: derived.networkRules.direct[i].type,
-      value: derived.networkRules.direct[i].value,
-      target: derived.networkRules.direct[i].target,
-      option: "no-resolve"
-    });
+  for (var i = 0; i < derived.networkRules.direct.length; i++) {
+    var r = derived.networkRules.direct[i];
+    ruleLines.push(r.type + "," + r.value + "," + r.target + ",no-resolve");
   }
-
-  appendRawRules(ruleLines, directNetworkRules);
-  for (i = 0; i < directPatternGroups.length; i++) {
-    appendSuffixRules(ruleLines, directPatternGroups[i], BASE.ruleTargets.direct);
-  }
+  appendSuffixRules(ruleLines, derived.patterns.direct, BASE.ruleTargets.direct);
   return ruleLines;
 }
 
