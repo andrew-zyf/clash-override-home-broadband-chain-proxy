@@ -101,318 +101,318 @@ BASE.dns.fallback = BASE.dns.overseas.concat(["https://dns.quad9.net/dns-query"]
 // ---------- Chain · 链式代理 ----------
 var SOURCE_CHAIN = {
   support: {
-      google_core: [
-        "+.google.com",
-        "+.googleapis.com",
-        "+.googleusercontent.com"
-      ],
-      google_static: [
-        "+.gstatic.com",
-        "+.ggpht.com",
-        "+.gvt1.com",
-        "+.gvt2.com"
-      ],
-      google_workspace: ["+.withgoogle.com"], // `googleworkspace.com` 证据不足，先不默认注入
-      google_cloud: [
-        "+.cloud.google.com"
-      ],
-      microsoft_core: [
-        "+.microsoft.com",
-        "+.live.com",
-        "+.windows.net"
-      ], // `windows.net` 作为 Microsoft 官方基础设施宽域名保留
-      microsoft_productivity: [
-        "+.office.com",
-        "+.office.net",
-        "+.office365.com",
-        "+.m365.cloud.microsoft",
-        "+.sharepoint.com",
-        "+.onenote.com",
-        "+.onedrive.com"
-      ],
-      microsoft_auth: [
-        "+.microsoftonline.com",
-        "+.msftauth.net",
-        "+.msauth.net",
-        "+.msecnd.net"
-      ],
-      microsoft_developer: [
-        "+.visualstudio.com",
-        "+.vsassets.io",
-        "+.vsmarketplacebadges.dev"
-      ], // Microsoft 开发者与 VS Code 生态基础设施
-      developer_git_hosts: [
-        "+.github.com",
-        "+.githubusercontent.com", // raw.githubusercontent.com 等，GFW 下常被 DNS 污染
-        "+.gitlab.com",
-        "+.gitlab-static.net",
-        "+.bitbucket.org",
-        "+.atlassian.com",         // Jira / Confluence / Bitbucket 官网
-        "+.atlassian.net"          // 客户工作区子域
-      ],
-      developer_package_registries: [
-        "+.npmjs.org",             // npm registry（Claude Code 自更新 + JS 项目依赖）
-        "+.npmjs.com",
-        "+.pypi.org",              // Python
-        "+.pythonhosted.org",      // PyPI 包文件 CDN
-        "+.crates.io",             // Rust
-        "+.rubygems.org",          // Ruby
-        "+.docker.com",            // Docker Hub
-        "+.docker.io"
-      ],
-      developer_deployment: [
-        "+.vercel.com",
-        "+.vercel.app",
-        "+.vercel-storage.com",
-        "+.netlify.com",
-        "+.netlify.app",
-        "+.supabase.com",
-        "+.supabase.co",
-        "+.fly.io",
-        "+.fly.dev",
-        "+.render.com",
-        "+.onrender.com",
-        "+.railway.app"
-      ],
-      developer_tools: [
-        "+.jetbrains.com",
-        "+.jetbrains.space"
-      ],
-      developer_docs_and_qa: [
-        "+.stackoverflow.com",
-        "+.sstatic.net",           // Stack Exchange 静态资源
-        "+.mozilla.org",           // 含 developer.mozilla.org / MDN
-        "+.readthedocs.io",
-        "+.readthedocs.org",
-        "+.gitbook.io",
-        "+.gitbook.com"
-      ]
+    google_core: [
+      "+.google.com",
+      "+.googleapis.com",
+      "+.googleusercontent.com"
+    ],
+    google_static: [
+      "+.gstatic.com",
+      "+.ggpht.com",
+      "+.gvt1.com",
+      "+.gvt2.com"
+    ],
+    google_workspace: ["+.withgoogle.com"], // `googleworkspace.com` 证据不足，先不默认注入
+    google_cloud: [
+      "+.cloud.google.com"
+    ],
+    microsoft_core: [
+      "+.microsoft.com",
+      "+.live.com",
+      "+.windows.net"
+    ], // `windows.net` 作为 Microsoft 官方基础设施宽域名保留
+    microsoft_productivity: [
+      "+.office.com",
+      "+.office.net",
+      "+.office365.com",
+      "+.m365.cloud.microsoft",
+      "+.sharepoint.com",
+      "+.onenote.com",
+      "+.onedrive.com"
+    ],
+    microsoft_auth: [
+      "+.microsoftonline.com",
+      "+.msftauth.net",
+      "+.msauth.net",
+      "+.msecnd.net"
+    ],
+    microsoft_developer: [
+      "+.visualstudio.com",
+      "+.vsassets.io",
+      "+.vsmarketplacebadges.dev"
+    ], // Microsoft 开发者与 VS Code 生态基础设施
+    developer_git_hosts: [
+      "+.github.com",
+      "+.githubusercontent.com", // raw.githubusercontent.com 等，GFW 下常被 DNS 污染
+      "+.gitlab.com",
+      "+.gitlab-static.net",
+      "+.bitbucket.org",
+      "+.atlassian.com",         // Jira / Confluence / Bitbucket 官网
+      "+.atlassian.net"          // 客户工作区子域
+    ],
+    developer_package_registries: [
+      "+.npmjs.org",             // npm registry（Claude Code 自更新 + JS 项目依赖）
+      "+.npmjs.com",
+      "+.pypi.org",              // Python
+      "+.pythonhosted.org",      // PyPI 包文件 CDN
+      "+.crates.io",             // Rust
+      "+.rubygems.org",          // Ruby
+      "+.docker.com",            // Docker Hub
+      "+.docker.io"
+    ],
+    developer_deployment: [
+      "+.vercel.com",
+      "+.vercel.app",
+      "+.vercel-storage.com",
+      "+.netlify.com",
+      "+.netlify.app",
+      "+.supabase.com",
+      "+.supabase.co",
+      "+.fly.io",
+      "+.fly.dev",
+      "+.render.com",
+      "+.onrender.com",
+      "+.railway.app"
+    ],
+    developer_tools: [
+      "+.jetbrains.com",
+      "+.jetbrains.space"
+    ],
+    developer_docs_and_qa: [
+      "+.stackoverflow.com",
+      "+.sstatic.net",           // Stack Exchange 静态资源
+      "+.mozilla.org",           // 含 developer.mozilla.org / MDN
+      "+.readthedocs.io",
+      "+.readthedocs.org",
+      "+.gitbook.io",
+      "+.gitbook.com"
+    ]
   },
   ai: {
-      anthropic: [
-        "+.claude.ai",
-        "+.claude.com",
-        "+.anthropic.com",
-        "+.claudeusercontent.com",
-        "+.clau.de" // Anthropic 官方场景使用过的短链
-      ],
-      openai: [
-        "+.openai.com",
-        "+.chatgpt.com",
-        "+.sora.com",
-        "+.oaiusercontent.com", // OpenAI 官方静态资源与内容分发基础设施
-        "+.oaistatic.com"
-      ],
-      google_ai: [
-        "+.gemini.google.com",
-        "+.aistudio.google.com",
-        "+.ai.google.dev",
-        "+.generativelanguage.googleapis.com",
-        "+.ai.google",
-        "+.notebooklm.google",
-        "+.makersuite.google.com", // 历史兼容入口，Google 已迁移到 AI Studio
-        "+.deepmind.google",
-        "+.labs.google"
-      ],
-      google_antigravity: [
-        "+.antigravity.google",
-        "+.antigravity-ide.com" // Antigravity IDE 的非 google 子域资源站
-      ],
-      perplexity: [
-        "+.perplexity.ai",
-        "+.perplexitycdn.com" // Perplexity 资源分发域名
-      ],
-      router_and_tools: [
-        "+.openrouter.ai"
-      ],
-      meta: [
-        "+.meta.ai"
-      ],
-      xai: [
-        "+.x.ai",
-        "+.grok.com"
-      ],
-      cursor: [
-        "+.cursor.sh",
-        "+.cursor.com"
-      ], // Cursor 后端与鉴权域名；PROCESS-NAME 仅覆盖进程，域名层仍需显式入链
-      mistral: [
-        "+.mistral.ai"        // 含 api / console / codestral 全部子域
-      ],
-      huggingface: [
-        "+.huggingface.co",
-        "+.hf.co",            // 短链
-        "+.hf.space"          // Spaces 应用托管
-      ],
-      replicate: [
-        "+.replicate.com",
-        "+.replicate.delivery" // 模型输出 CDN
-      ],
-      groq: [
-        "+.groq.com"
-      ],
-      together: [
-        "+.together.ai",
-        "+.together.xyz"
-      ],
-      elevenlabs: [
-        "+.elevenlabs.io"      // 语音合成
-      ],
-      midjourney: [
-        "+.midjourney.com"
-      ],
-      runway: [
-        "+.runwayml.com"       // Runway 视频生成
-      ],
-      stability: [
-        "+.stability.ai"
-      ],
-      ideogram: [
-        "+.ideogram.ai"
-      ],
-      civitai: [
-        "+.civitai.com"        // SD 模型与社区
-      ],
-      ai_search: [
-        "+.you.com",           // You.com / YouChat
-        "+.phind.com",         // Phind 编程搜索
-        "+.kagi.com"           // Kagi 付费搜索
-      ],
-      character_and_companion: [
-        "+.character.ai",
-        "+.pi.ai"              // Inflection / Pi
-      ]
+    anthropic: [
+      "+.claude.ai",
+      "+.claude.com",
+      "+.anthropic.com",
+      "+.claudeusercontent.com",
+      "+.clau.de" // Anthropic 官方场景使用过的短链
+    ],
+    openai: [
+      "+.openai.com",
+      "+.chatgpt.com",
+      "+.sora.com",
+      "+.oaiusercontent.com", // OpenAI 官方静态资源与内容分发基础设施
+      "+.oaistatic.com"
+    ],
+    google_ai: [
+      "+.gemini.google.com",
+      "+.aistudio.google.com",
+      "+.ai.google.dev",
+      "+.generativelanguage.googleapis.com",
+      "+.ai.google",
+      "+.notebooklm.google",
+      "+.makersuite.google.com", // 历史兼容入口，Google 已迁移到 AI Studio
+      "+.deepmind.google",
+      "+.labs.google"
+    ],
+    google_antigravity: [
+      "+.antigravity.google",
+      "+.antigravity-ide.com" // Antigravity IDE 的非 google 子域资源站
+    ],
+    perplexity: [
+      "+.perplexity.ai",
+      "+.perplexitycdn.com" // Perplexity 资源分发域名
+    ],
+    router_and_tools: [
+      "+.openrouter.ai"
+    ],
+    meta: [
+      "+.meta.ai"
+    ],
+    xai: [
+      "+.x.ai",
+      "+.grok.com"
+    ],
+    cursor: [
+      "+.cursor.sh",
+      "+.cursor.com"
+    ], // Cursor 后端与鉴权域名；PROCESS-NAME 仅覆盖进程，域名层仍需显式入链
+    mistral: [
+      "+.mistral.ai"        // 含 api / console / codestral 全部子域
+    ],
+    huggingface: [
+      "+.huggingface.co",
+      "+.hf.co",            // 短链
+      "+.hf.space"          // Spaces 应用托管
+    ],
+    replicate: [
+      "+.replicate.com",
+      "+.replicate.delivery" // 模型输出 CDN
+    ],
+    groq: [
+      "+.groq.com"
+    ],
+    together: [
+      "+.together.ai",
+      "+.together.xyz"
+    ],
+    elevenlabs: [
+      "+.elevenlabs.io"      // 语音合成
+    ],
+    midjourney: [
+      "+.midjourney.com"
+    ],
+    runway: [
+      "+.runwayml.com"       // Runway 视频生成
+    ],
+    stability: [
+      "+.stability.ai"
+    ],
+    ideogram: [
+      "+.ideogram.ai"
+    ],
+    civitai: [
+      "+.civitai.com"        // SD 模型与社区
+    ],
+    ai_search: [
+      "+.you.com",           // You.com / YouChat
+      "+.phind.com",         // Phind 编程搜索
+      "+.kagi.com"           // Kagi 付费搜索
+    ],
+    character_and_companion: [
+      "+.character.ai",
+      "+.pi.ai"              // Inflection / Pi
+    ]
   },
   // AI 会话共享的第三方集成：登录反机器人、第三方鉴权、订阅结算、特性开关与错误上报。
   // 这些域名由多家 AI 厂商共用，统一随主会话走家宽链路，避免 IP 不一致触发的风控与指纹漂移。
   // Cloudflare Turnstile (challenges.cloudflare.com) 已被 chain.cloudflare 的 +.cloudflare.com 覆盖。
   integrations: {
-      antibot: [
-        "+.arkoselabs.com",  // ChatGPT 登录的 Arkose FunCaptcha（token 绑定客户端 IP）
-        "+.funcaptcha.com",
-        "+.recaptcha.net",   // reCAPTCHA 独立域，并不走 google.com
-        "+.hcaptcha.com"     // hCaptcha（Discord / 部分 AI 注册）
-      ],
-      auth_providers: [
-        "+.auth0.com",       // ChatGPT Team 等使用 Auth0
-        "+.auth0cdn.com",
-        "+.clerk.com",       // OpenRouter / 多家 AI 创业用 Clerk
-        "+.clerk.dev",
-        "+.clerk.accounts.dev",
-        "+.okta.com"         // 企业 SSO（含 Anthropic Console 团队席位）
-      ],
-      payments: [
-        "+.stripe.com",      // Claude Pro / ChatGPT Plus / Perplexity Pro 主要结算入口
-        "+.stripe.network",
-        "+.paypal.com",      // PayPal
-        "+.paypalobjects.com", // PayPal CDN
-        "+.paddle.com",      // Paddle（Apple 友好的订阅平台）
-        "+.lemonsqueezy.com" // 独立 AI 应用常用
-      ],
-      telemetry: [
-        "+.statsig.com",     // Claude Code / Claude.ai / ChatGPT 的 feature flag
-        "+.statsigapi.net",
-        "+.featuregates.org",
-        "+.featureassets.org",
-        "+.sentry.io",       // Sentry 错误上报
-        "+.sentry-cdn.com",
-        "+.posthog.com",     // PostHog（Claude.ai 等）
-        "+.segment.com",     // Segment / Twilio Segment
-        "+.segment.io",
-        "+.segmentapis.com",
-        "+.mixpanel.com",
-        "+.amplitude.com",
-        "+.datadoghq.com",   // Datadog RUM 浏览器端
-        "+.browser-intake-datadoghq.com"
-      ]
+    antibot: [
+      "+.arkoselabs.com",  // ChatGPT 登录的 Arkose FunCaptcha（token 绑定客户端 IP）
+      "+.funcaptcha.com",
+      "+.recaptcha.net",   // reCAPTCHA 独立域，并不走 google.com
+      "+.hcaptcha.com"     // hCaptcha（Discord / 部分 AI 注册）
+    ],
+    auth_providers: [
+      "+.auth0.com",       // ChatGPT Team 等使用 Auth0
+      "+.auth0cdn.com",
+      "+.clerk.com",       // OpenRouter / 多家 AI 创业用 Clerk
+      "+.clerk.dev",
+      "+.clerk.accounts.dev",
+      "+.okta.com"         // 企业 SSO（含 Anthropic Console 团队席位）
+    ],
+    payments: [
+      "+.stripe.com",      // Claude Pro / ChatGPT Plus / Perplexity Pro 主要结算入口
+      "+.stripe.network",
+      "+.paypal.com",      // PayPal
+      "+.paypalobjects.com", // PayPal CDN
+      "+.paddle.com",      // Paddle（Apple 友好的订阅平台）
+      "+.lemonsqueezy.com" // 独立 AI 应用常用
+    ],
+    telemetry: [
+      "+.statsig.com",     // Claude Code / Claude.ai / ChatGPT 的 feature flag
+      "+.statsigapi.net",
+      "+.featuregates.org",
+      "+.featureassets.org",
+      "+.sentry.io",       // Sentry 错误上报
+      "+.sentry-cdn.com",
+      "+.posthog.com",     // PostHog（Claude.ai 等）
+      "+.segment.com",     // Segment / Twilio Segment
+      "+.segment.io",
+      "+.segmentapis.com",
+      "+.mixpanel.com",
+      "+.amplitude.com",
+      "+.datadoghq.com",   // Datadog RUM 浏览器端
+      "+.browser-intake-datadoghq.com"
+    ]
   },
   force: {
-      cloudflare: [
-        "+.cloudflare.com"
-      ]
+    cloudflare: [
+      "+.cloudflare.com"
+    ]
   },
   apps: {
-      ai: {
-        apps: [
-          "Claude",
-          "ChatGPT",
-          "Perplexity",
-          "Cursor"
-        ],
-        helperSuffixes: [
-          "Helper"
-        ],
-        exact: [
-          "ChatGPTHelper",
-          "Claude Helper (Renderer)",
-          "Claude Helper (GPU)",
-          "Claude Helper (Plugin)",
-          // macOS PROCESS-NAME 匹配 Bundle 可执行名，不含 `.app` 后缀。
-          // 未列入此处的应用：
-          //   - Claude Code / URL Handler 都以 `claude` 运行，统一通过 ai.cli 命中。
-          //   - Antigravity 的 Bundle 可执行名是 `Electron`，无法按进程名精确匹配，改走域名规则。
-          "Quotio"
-        ],
-        cli: ["claude", "gemini", "codex"]
-      },
-      browser: {
-        apps: [
-          "Dia",
-          "Atlas",
-          "SunBrowser"
-        ],
-        helperSuffixes: [
-          "Helper",
-          "Helper (Renderer)",
-          "Helper (GPU)",
-          "Helper (Plugin)",
-          "Helper (Alerts)"
-        ]
-      }
+    ai: {
+      apps: [
+        "Claude",
+        "ChatGPT",
+        "Perplexity",
+        "Cursor"
+      ],
+      helperSuffixes: [
+        "Helper"
+      ],
+      exact: [
+        "ChatGPTHelper",
+        "Claude Helper (Renderer)",
+        "Claude Helper (GPU)",
+        "Claude Helper (Plugin)",
+        // macOS PROCESS-NAME 匹配 Bundle 可执行名，不含 `.app` 后缀。
+        // 未列入此处的应用：
+        //   - Claude Code / URL Handler 都以 `claude` 运行，统一通过 ai.cli 命中。
+        //   - Antigravity 的 Bundle 可执行名是 `Electron`，无法按进程名精确匹配，改走域名规则。
+        "Quotio"
+      ],
+      cli: ["claude", "gemini", "codex"]
+    },
+    browser: {
+      apps: [
+        "Dia",
+        "Atlas",
+        "SunBrowser"
+      ],
+      helperSuffixes: [
+        "Helper",
+        "Helper (Renderer)",
+        "Helper (GPU)",
+        "Helper (Plugin)",
+        "Helper (Alerts)"
+      ]
+    }
   }
 };
 
 // ---------- Global Default · 域外默认代理 ----------
 var SOURCE_GLOBAL_DEFAULT = {
   cloud: {
-      cloudflare: [
-        "+.cloudflare-dns.com",
-        "+.cdn.cloudflare.net",
-        "+.workers.dev",
-        "+.pages.dev"
-      ],
-      aws: [
-        "+.amazonaws.com",
-        "+.awsstatic.com",
-        "+.cloudfront.net"
-      ],
-      fastly: [
-        "+.fastly.com",
-        "+.fastly.net",
-        "+.fastlylb.net"
-      ],
-      akamai: [
-        "+.akamai.net",
-        "+.akamaiedge.net",
-        "+.akamaihd.net",
-        "+.akamaized.net",
-        "+.edgekey.net",
-        "+.edgesuite.net"
-      ],
-      azure_cdn: [
-        "+.azureedge.net",
-        "+.azurefd.net"
-      ],
-      jsdelivr: [
-        "+.jsdelivr.net"
-      ],
-      bunny: [
-        "+.bunnycdn.com",
-        "+.b-cdn.net"        // BunnyCDN 客户加速域
-      ],
-      cloudinary: [
-        "+.cloudinary.com"   // 图片 / 视频 SaaS CDN
-      ]
+    cloudflare: [
+      "+.cloudflare-dns.com",
+      "+.cdn.cloudflare.net",
+      "+.workers.dev",
+      "+.pages.dev"
+    ],
+    aws: [
+      "+.amazonaws.com",
+      "+.awsstatic.com",
+      "+.cloudfront.net"
+    ],
+    fastly: [
+      "+.fastly.com",
+      "+.fastly.net",
+      "+.fastlylb.net"
+    ],
+    akamai: [
+      "+.akamai.net",
+      "+.akamaiedge.net",
+      "+.akamaihd.net",
+      "+.akamaized.net",
+      "+.edgekey.net",
+      "+.edgesuite.net"
+    ],
+    azure_cdn: [
+      "+.azureedge.net",
+      "+.azurefd.net"
+    ],
+    jsdelivr: [
+      "+.jsdelivr.net"
+    ],
+    bunny: [
+      "+.bunnycdn.com",
+      "+.b-cdn.net"        // BunnyCDN 客户加速域
+    ],
+    cloudinary: [
+      "+.cloudinary.com"   // 图片 / 视频 SaaS CDN
+    ]
   }
 };
 
@@ -816,7 +816,7 @@ var SOURCE_OVERSEAS_DIRECT = {
       ],
       mineru: [
         "+.mineru.org.cn",
-        "+.mineru.oss-cn-shanghai.aliyuncs.com"
+        "+.openxlab.org.cn"
       ]
     },
     apps: {
@@ -848,17 +848,17 @@ var SOURCE_OVERSEAS_DIRECT = {
 var SOURCE_NETWORK_DIRECT = {
   direct: [
     // RFC 1918 私有网络
-    { type: "IP-CIDR", value: "10.0.0.0/8",        target: BASE.ruleTargets.direct },
-    { type: "IP-CIDR", value: "172.16.0.0/12",     target: BASE.ruleTargets.direct },
-    { type: "IP-CIDR", value: "192.168.0.0/16",    target: BASE.ruleTargets.direct },
+    { type: "IP-CIDR", value: "10.0.0.0/8", target: BASE.ruleTargets.direct },
+    { type: "IP-CIDR", value: "172.16.0.0/12", target: BASE.ruleTargets.direct },
+    { type: "IP-CIDR", value: "192.168.0.0/16", target: BASE.ruleTargets.direct },
     // 链路本地
-    { type: "IP-CIDR", value: "169.254.0.0/16",    target: BASE.ruleTargets.direct },
+    { type: "IP-CIDR", value: "169.254.0.0/16", target: BASE.ruleTargets.direct },
     // CGNAT (RFC 6598) + Tailscale magic IP
-    { type: "IP-CIDR", value: "100.64.0.0/10",     target: BASE.ruleTargets.direct },
+    { type: "IP-CIDR", value: "100.64.0.0/10", target: BASE.ruleTargets.direct },
     { type: "IP-CIDR", value: "100.100.100.100/32", target: BASE.ruleTargets.direct },
     // IPv6 ULA + 链路本地 + Tailscale ULA
-    { type: "IP-CIDR6", value: "fc00::/7",         target: BASE.ruleTargets.direct },
-    { type: "IP-CIDR6", value: "fe80::/10",        target: BASE.ruleTargets.direct },
+    { type: "IP-CIDR6", value: "fc00::/7", target: BASE.ruleTargets.direct },
+    { type: "IP-CIDR6", value: "fe80::/10", target: BASE.ruleTargets.direct },
     { type: "IP-CIDR6", value: "fd7a:115c:a1e0::/48", target: BASE.ruleTargets.direct }
   ]
 };
@@ -1031,42 +1031,72 @@ function shouldRouteBrowserToChain() {
 function buildPolicy() {
   return [
     // ---- chain · 走家宽出口 ----
-    { key: "chain.support",      patterns: flattenGroupedPatterns(SOURCE_CHAIN.support),
-      route: "chain", dnsZone: "overseas", sniffer: "force", fallbackFilter: true },
-    { key: "chain.ai",           patterns: flattenGroupedPatterns(SOURCE_CHAIN.ai),
-      route: "chain", dnsZone: "overseas", sniffer: "force", fallbackFilter: true },
-    { key: "chain.integrations", patterns: flattenGroupedPatterns(SOURCE_CHAIN.integrations),
-      route: "chain", dnsZone: "overseas", sniffer: "force", fallbackFilter: true },
-    { key: "chain.cloudflare",   patterns: flattenGroupedPatterns(SOURCE_CHAIN.force),
-      route: "chain", dnsZone: "overseas", sniffer: "force", fallbackFilter: true },
+    {
+      key: "chain.support", patterns: flattenGroupedPatterns(SOURCE_CHAIN.support),
+      route: "chain", dnsZone: "overseas", sniffer: "force", fallbackFilter: true
+    },
+    {
+      key: "chain.ai", patterns: flattenGroupedPatterns(SOURCE_CHAIN.ai),
+      route: "chain", dnsZone: "overseas", sniffer: "force", fallbackFilter: true
+    },
+    {
+      key: "chain.integrations", patterns: flattenGroupedPatterns(SOURCE_CHAIN.integrations),
+      route: "chain", dnsZone: "overseas", sniffer: "force", fallbackFilter: true
+    },
+    {
+      key: "chain.cloudflare", patterns: flattenGroupedPatterns(SOURCE_CHAIN.force),
+      route: "chain", dnsZone: "overseas", sniffer: "force", fallbackFilter: true
+    },
 
     // ---- media · 走媒体地区组 ----
-    { key: "media", patterns: flattenGroupedPatterns(SOURCE_MEDIA),
-      route: "media", dnsZone: "overseas", fallbackFilter: true },
+    {
+      key: "media", patterns: flattenGroupedPatterns(SOURCE_MEDIA),
+      route: "media", dnsZone: "overseas", fallbackFilter: true
+    },
 
     // ---- 默认代理（不写 route，仅做 DNS / fallback-filter）----
-    { key: "default.overseasCloudCdn", patterns: flattenGroupedPatterns(SOURCE_GLOBAL_DEFAULT.cloud),
-      dnsZone: "overseas", fallbackFilter: true },
+    {
+      key: "default.overseasCloudCdn", patterns: flattenGroupedPatterns(SOURCE_GLOBAL_DEFAULT.cloud),
+      dnsZone: "overseas", fallbackFilter: true
+    },
 
     // ---- direct · 直连 ----
-    { key: "direct.apple",       patterns: flattenGroupedPatterns(SOURCE_OVERSEAS_DIRECT.special.apple),
-      route: "direct", dnsZone: "overseas", fakeIpBypass: true },
-    { key: "direct.egressCheck", patterns: flattenGroupedPatterns(SOURCE_OVERSEAS_DIRECT.special.egressCheck),
-      route: "direct", dnsZone: "overseas", fallbackFilter: true },
-    { key: "direct.overseasApps", patterns: flattenGroupedPatterns(SOURCE_OVERSEAS_DIRECT.global.apps),
-      route: "direct", dnsZone: "overseas", sniffer: "skip", fallbackFilter: true },
-    { key: "direct.cnAppsOverseasDoh", patterns: flattenGroupedPatterns(SOURCE_OVERSEAS_DIRECT.global.cnApps),
-      route: "direct", dnsZone: "overseas", sniffer: "skip", fallbackFilter: true },
-    { key: "direct.cn.ai",       patterns: flattenGroupedPatterns(SOURCE_CN_DIRECT.ai),
-      route: "direct", dnsZone: "domestic" },
-    { key: "direct.cn.office",   patterns: flattenGroupedPatterns(SOURCE_CN_DIRECT.office),
-      route: "direct", dnsZone: "domestic" },
-    { key: "direct.cn.cloud",    patterns: flattenGroupedPatterns(SOURCE_CN_DIRECT.cloud),
-      route: "direct", dnsZone: "domestic" },
-    { key: "direct.cn.consumer", patterns: flattenGroupedPatterns(SOURCE_CN_DIRECT.consumer),
-      route: "direct", dnsZone: "domestic" },
-    { key: "direct.localAndPush", patterns: flattenGroupedPatterns(SOURCE_LOCAL_DIRECT),
-      route: "direct", dnsZone: "domestic", sniffer: "skip" }
+    {
+      key: "direct.apple", patterns: flattenGroupedPatterns(SOURCE_OVERSEAS_DIRECT.special.apple),
+      route: "direct", dnsZone: "overseas", fakeIpBypass: true
+    },
+    {
+      key: "direct.egressCheck", patterns: flattenGroupedPatterns(SOURCE_OVERSEAS_DIRECT.special.egressCheck),
+      route: "direct", dnsZone: "overseas", fallbackFilter: true
+    },
+    {
+      key: "direct.overseasApps", patterns: flattenGroupedPatterns(SOURCE_OVERSEAS_DIRECT.global.apps),
+      route: "direct", dnsZone: "overseas", sniffer: "skip", fallbackFilter: true
+    },
+    {
+      key: "direct.cnAppsOverseasDoh", patterns: flattenGroupedPatterns(SOURCE_OVERSEAS_DIRECT.global.cnApps),
+      route: "direct", dnsZone: "overseas", sniffer: "skip", fallbackFilter: true
+    },
+    {
+      key: "direct.cn.ai", patterns: flattenGroupedPatterns(SOURCE_CN_DIRECT.ai),
+      route: "direct", dnsZone: "domestic"
+    },
+    {
+      key: "direct.cn.office", patterns: flattenGroupedPatterns(SOURCE_CN_DIRECT.office),
+      route: "direct", dnsZone: "domestic"
+    },
+    {
+      key: "direct.cn.cloud", patterns: flattenGroupedPatterns(SOURCE_CN_DIRECT.cloud),
+      route: "direct", dnsZone: "domestic"
+    },
+    {
+      key: "direct.cn.consumer", patterns: flattenGroupedPatterns(SOURCE_CN_DIRECT.consumer),
+      route: "direct", dnsZone: "domestic"
+    },
+    {
+      key: "direct.localAndPush", patterns: flattenGroupedPatterns(SOURCE_LOCAL_DIRECT),
+      route: "direct", dnsZone: "domestic", sniffer: "skip"
+    }
   ];
 }
 
