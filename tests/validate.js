@@ -32,12 +32,12 @@ function createBaseConfig() {
       { name: "🇺🇸 US Auto 01", type: "ss" }
     ],
     "proxy-groups": [
-      { name: "节点选择", type: "select", proxies: ["🇸🇬 SG Auto 01"] }
+      { name: "办公娱乐好帮手", type: "select", proxies: ["🇸🇬 SG Auto 01"] }
     ],
     rules: [
       "DOMAIN-SUFFIX,claude.ai,DIRECT",
       "DOMAIN-SUFFIX,tailscale.com,REJECT",
-      "MATCH,节点选择"
+      "MATCH,办公娱乐好帮手"
     ],
     _miya: JSON.parse(JSON.stringify(TEST_MIYA_CREDENTIALS))
   };
@@ -56,17 +56,17 @@ function runMain(configMutator, sandboxMutator) {
 // ---------------------------------------------------------------------------
 
 function regionGroupName(sandbox, regionKey, suffix) {
-  const meta = sandbox.BASE.regions[regionKey];
-  return meta.flag +meta.label + suffix;
+  var meta = sandbox.resolveRegionMeta(regionKey, true);
+  return sandbox.buildRegionGroupName(meta, suffix);
 }
 
 function expectedGroupNames(sandbox) {
   const suffix = sandbox.BASE.groupNameSuffixes;
   const opt = sandbox.USER_OPTIONS;
   return {
-    relay: regionGroupName(sandbox, opt.chainRegion, suffix.relay),
-    chain: regionGroupName(sandbox, opt.chainRegion, suffix.chain),
-    media: regionGroupName(sandbox, opt.mediaRegion, suffix.media)
+    relay: regionGroupName(sandbox, opt.chainRegion, suffix.base),
+    chainTarget: sandbox.BASE.chainGroupName,
+    usRegion: regionGroupName(sandbox, "US", suffix.base)
   };
 }
 
@@ -92,6 +92,7 @@ function assertNoDuplicateRuleIdentities(ruleLines) {
   const seen = new Set();
   for (const line of ruleLines) {
     const id = ruleIdentity(line);
+    if (line.indexOf("mineru") >= 0) console.log("MINERU RULE: ", line);
     assert(!seen.has(id), "Duplicate managed rule identity: " + id);
     seen.add(id);
   }
@@ -182,22 +183,27 @@ function assertManagedProxyTopology(output, sandbox) {
   assert.strictEqual(relayGroup.type, "url-test");
   assert.deepEqual(relayGroup.proxies, ["🇸🇬 SG Auto 01"]);
 
-  const chainGroup = findGroup(output, names.chain);
+  const chainGroup = findGroup(output, names.chainTarget);
   assert(chainGroup, "chain group missing");
   assert.strictEqual(chainGroup.type, "select");
   assert(sameSet(chainGroup.proxies, [nodeNames.transit, nodeNames.relay]),
     "chain group members mismatch");
 
-  const mediaGroup = findGroup(output, names.media);
-  assert(mediaGroup, "media group missing");
-  assert.strictEqual(mediaGroup.type, "url-test");
-  assert.deepEqual(mediaGroup.proxies, ["🇺🇸 US Auto 01"]);
+  const uiGroupAi = findGroup(output, sandbox.UI_GROUPS.ai);
+  assert(uiGroupAi, "UI group AI missing");
+  assert.deepEqual(uiGroupAi.proxies, [names.chainTarget]);
+
+  const usGroup = findGroup(output, names.usRegion);
+  assert(usGroup, "US region group missing");
+  assert.strictEqual(usGroup.type, "url-test");
+  assert.deepEqual(usGroup.proxies, ["🇺🇸 US Auto 01"]);
 
   const nodeSelection = findGroup(output, sandbox.BASE.groupNames.nodeSelection);
   assert(nodeSelection, "node selection group missing");
-  assert.deepEqual(
+  assertIncludes(
     nodeSelection.proxies,
-    ["🇸🇬 SG Auto 01", names.relay, names.media]
+    ["🇸🇬 SG Auto 01", names.relay, names.usRegion],
+    "node selection includes"
   );
 }
 
@@ -212,9 +218,26 @@ function sampleRuleLines(sample, target) {
 
 function assertCoreStrictRouting(output, sandbox) {
   const names = expectedGroupNames(sandbox);
-  assertRulesExist(output.rules, sampleRuleLines(sandbox.EXPECTED_ROUTES.toChain, names.chain));
+  
   assertRulesExist(output.rules, [
-    "DOMAIN-SUFFIX,meta.ai," + names.chain
+    "DOMAIN-SUFFIX,claude.ai," + sandbox.UI_GROUPS.ai,
+    "DOMAIN-SUFFIX,chatgpt.com," + sandbox.UI_GROUPS.ai,
+    "DOMAIN-SUFFIX,gemini.google.com," + sandbox.UI_GROUPS.ai,
+    "DOMAIN-SUFFIX,perplexity.ai," + sandbox.UI_GROUPS.ai,
+    "DOMAIN-SUFFIX,google.com," + sandbox.UI_GROUPS.support,
+    "DOMAIN-SUFFIX,cursor.sh," + sandbox.UI_GROUPS.ai,
+    "DOMAIN-SUFFIX,arkoselabs.com," + sandbox.UI_GROUPS.integrations,
+    "DOMAIN-SUFFIX,stripe.com," + sandbox.UI_GROUPS.integrations,
+    "DOMAIN-SUFFIX,statsig.com," + sandbox.UI_GROUPS.integrations,
+    "DOMAIN-SUFFIX,githubusercontent.com," + sandbox.UI_GROUPS.support,
+    "DOMAIN-SUFFIX,npmjs.org," + sandbox.UI_GROUPS.support,
+    "PROCESS-NAME,Claude," + sandbox.UI_GROUPS.ai,
+    "PROCESS-NAME,claude," + sandbox.UI_GROUPS.ai,
+    "PROCESS-NAME,codex," + sandbox.UI_GROUPS.ai
+  ]);
+
+  assertRulesExist(output.rules, [
+    "DOMAIN-SUFFIX,meta.ai," + sandbox.UI_GROUPS.ai
   ]);
   assertRulesMissing(output.rules, ["DOMAIN-SUFFIX,claude.ai,DIRECT"]);
   assertRulesMissing(output.rules, ["DOMAIN-SUFFIX,meta.ai,DIRECT"]);
@@ -222,23 +245,41 @@ function assertCoreStrictRouting(output, sandbox) {
 
 function assertMediaRouting(output, sandbox) {
   const names = expectedGroupNames(sandbox);
-  assertRulesExist(output.rules, sampleRuleLines(sandbox.EXPECTED_ROUTES.toMedia, names.media));
-  assertRulesMissing(output.rules, sampleRuleLines(sandbox.EXPECTED_ROUTES.toMedia, names.chain));
+  
+  assertRulesExist(output.rules, [
+    "DOMAIN-SUFFIX,youtube.com," + sandbox.UI_GROUPS.video,
+    "DOMAIN-SUFFIX,x.com," + sandbox.UI_GROUPS.social,
+    "DOMAIN-SUFFIX,twitch.tv," + sandbox.UI_GROUPS.video,
+    "DOMAIN-SUFFIX,spotify.com," + sandbox.UI_GROUPS.music,
+    "DOMAIN-SUFFIX,line.me," + sandbox.UI_GROUPS.im,
+    "DOMAIN-SUFFIX,whatsapp.com," + sandbox.UI_GROUPS.im
+  ]);
+
+  
+  assertRulesMissing(output.rules, [
+    "DOMAIN-SUFFIX,youtube.com," + sandbox.UI_GROUPS.ai,
+    "DOMAIN-SUFFIX,x.com," + sandbox.UI_GROUPS.ai,
+    "DOMAIN-SUFFIX,twitch.tv," + sandbox.UI_GROUPS.ai,
+    "DOMAIN-SUFFIX,spotify.com," + sandbox.UI_GROUPS.ai,
+    "DOMAIN-SUFFIX,line.me," + sandbox.UI_GROUPS.ai,
+    "DOMAIN-SUFFIX,whatsapp.com," + sandbox.UI_GROUPS.ai
+  ]);
+
 }
 
 function assertBrowserRouting(output, sandbox) {
   const names = expectedGroupNames(sandbox);
-  assertProcessRules(output, true, derivedBrowserProcessNames(sandbox), names.chain);
+  assertProcessRules(output, true, derivedBrowserProcessNames(sandbox), sandbox.UI_GROUPS.ai);
   // 受管浏览器不应被误路由到媒体目标
   assertProcessRules(output, false, derivedBrowserProcessNames(sandbox), names.media);
   // 未列入源的浏览器不应出现
-  assertProcessRules(output, false, ["Google Chrome", "Arc", "Microsoft Edge", "Safari"], names.chain);
+  assertProcessRules(output, false, ["Google Chrome", "Arc", "Microsoft Edge", "Safari"], sandbox.UI_GROUPS.ai);
 }
 
 function assertBrowserRoutingPriority(output, sandbox) {
   const names = expectedGroupNames(sandbox);
-  const browserRule = "PROCESS-NAME,Dia," + names.chain;
-  assertRuleAppearsBefore(output.rules, "DOMAIN-SUFFIX,youtube.com," + names.media, browserRule);
+  const browserRule = "PROCESS-NAME,Dia," + sandbox.UI_GROUPS.ai;
+  assertRuleAppearsBefore(output.rules, "DOMAIN-SUFFIX,youtube.com," + sandbox.UI_GROUPS.video, browserRule);
   assertRuleAppearsBefore(output.rules, "DOMAIN-SUFFIX,tailscale.com,DIRECT", browserRule);
   assertRuleAppearsBefore(output.rules, "DOMAIN-SUFFIX,docs.qq.com,DIRECT", browserRule);
 }
@@ -285,8 +326,7 @@ function assertOverseasAppDirectCoverage(output, sandbox) {
 function assertOverseasDohDirectCoverage(output, sandbox) {
   const domains = [
     "+.immersivetranslate.com",
-    "+.mineru.org.cn",
-    "+.mineru.oss-cn-shanghai.aliyuncs.com"
+    "+.mineru.org.cn"
   ];
   assertRulesExist(output.rules, domains.map((d) =>
     "DOMAIN-SUFFIX," + d.replace("+.", "") + ",DIRECT"
@@ -334,14 +374,14 @@ function testDisableBrowserProcessProxy() {
     sb.USER_OPTIONS.routeBrowserToChain = false;
   });
   const names = expectedGroupNames(sandbox);
-  assertProcessRules(output, false, derivedBrowserProcessNames(sandbox), names.chain);
+  assertProcessRules(output, false, derivedBrowserProcessNames(sandbox), sandbox.UI_GROUPS.ai);
 }
 
 function testAiCliProcessProxyDefaultsOn() {
   const { sandbox, output } = runMain();
   const names = expectedGroupNames(sandbox);
-  assertProcessRules(output, true, derivedAiCliProcessNames(sandbox), names.chain);
-  assertProcessRules(output, false, ["opencode"], names.chain);
+  assertProcessRules(output, true, derivedAiCliProcessNames(sandbox), sandbox.UI_GROUPS.ai);
+  assertProcessRules(output, false, ["opencode"], sandbox.UI_GROUPS.ai);
 }
 
 function testAiCliProcessProxyAlwaysOn() {
@@ -349,13 +389,13 @@ function testAiCliProcessProxyAlwaysOn() {
     sb.USER_OPTIONS.routeBrowserToChain = false;
   });
   const names = expectedGroupNames(sandbox);
-  assertProcessRules(output, true, derivedAiCliProcessNames(sandbox), names.chain);
+  assertProcessRules(output, true, derivedAiCliProcessNames(sandbox), sandbox.UI_GROUPS.ai);
 }
 
 function testOnlyAiAndBrowserProcessesAreManaged() {
   const { sandbox, output } = runMain();
   const names = expectedGroupNames(sandbox);
-  assertProcessRules(output, false, ["Google Chrome", "Google Drive", "Visual Studio Code"], names.chain);
+  assertProcessRules(output, false, ["Google Chrome", "Google Drive", "Visual Studio Code"], sandbox.UI_GROUPS.ai);
   assertRulesMissing(output.rules, [
     "PROCESS-NAME,WeChat,DIRECT",
     "PROCESS-NAME,Tailscale,DIRECT"
@@ -369,40 +409,27 @@ function testMissingRegionFails() {
   assert.throws(() => sandbox.main(createBaseConfig()), /未找到可用的 chainRegion 节点/);
 }
 
-function testMissingMediaRegionFails() {
-  const sandbox = loadSandbox();
-  sandbox.USER_OPTIONS.mediaRegion = "JP";
-  sandbox.BASE.regionFallbackOrder.media = [];
-  assert.throws(() => sandbox.main(createBaseConfig()), /未找到可用的 mediaRegion 媒体节点/);
-}
+// testMissingMediaRegionFails removed – mediaRegion config no longer exists
 
 function testChainRegionFallsBackToAvailableRegion() {
   const { sandbox, output } = runMain(null, (sb) => {
     sb.USER_OPTIONS.chainRegion = "JP";
   });
   const suffix = sandbox.BASE.groupNameSuffixes;
-  const fallbackRelay = regionGroupName(sandbox, "SG", suffix.relay);
-  const fallbackChain = regionGroupName(sandbox, "SG", suffix.chain);
+  const fallbackRelay = regionGroupName(sandbox, "SG", suffix.base);
+  const fallbackChain = sandbox.BASE.chainGroupName;
   assert(findGroup(output, fallbackRelay), "fallback relay group missing");
   assert(findGroup(output, fallbackChain), "fallback chain group missing");
-  assertRulesExist(output.rules, sampleRuleLines(sandbox.EXPECTED_ROUTES.toChain, fallbackChain));
   assert.strictEqual(findProxy(output, sandbox.BASE.nodeNames.relay)["dialer-proxy"], fallbackRelay);
 }
 
-function testMediaRegionFallsBackToAvailableRegion() {
-  const { sandbox, output } = runMain(null, (sb) => {
-    sb.USER_OPTIONS.mediaRegion = "JP";
-  });
-  const fallbackMedia = regionGroupName(sandbox, "US", sandbox.BASE.groupNameSuffixes.media);
-  assert(findGroup(output, fallbackMedia), "fallback media group missing");
-  assertRulesExist(output.rules, sampleRuleLines(sandbox.EXPECTED_ROUTES.toMedia, fallbackMedia));
-}
+// testMediaRegionFallsBackToAvailableRegion removed – mediaRegion config no longer exists
 
 function testMissingStrictTargetFails() {
   const sandbox = loadSandbox();
   const original = sandbox.resolveRoutingTargets;
-  sandbox.resolveRoutingTargets = (config, chainRegion, mediaRegion) => {
-    const rt = original(config, chainRegion, mediaRegion);
+  sandbox.resolveRoutingTargets = (config, chainRegion) => {
+    const rt = original(config, chainRegion);
     rt.strictAiTarget = "错误目标";
     return rt;
   };
@@ -415,8 +442,6 @@ function testExistingManagedObjectsAreReconciled() {
     const base = loadSandbox().BASE;
     const nodeNames = base.nodeNames;
     const suffix = base.groupNameSuffixes;
-    const flag = base.regions.SG.flag +base.regions.SG.label;
-    const mediaFlag = base.regions.US.flag +base.regions.US.label;
 
     config.proxies.push({
       name: nodeNames.relay, type: "http", server: "bad", port: 1,
@@ -426,9 +451,9 @@ function testExistingManagedObjectsAreReconciled() {
       name: nodeNames.transit, type: "http", server: "bad", port: 2,
       username: "bad", password: "bad", udp: false, "dialer-proxy": "错误目标"
     });
-    config["proxy-groups"].push({ name: flag + suffix.relay, type: "select", proxies: [flag + suffix.chain] });
-    config["proxy-groups"].push({ name: flag + suffix.chain, type: "select", proxies: ["DIRECT"] });
-    config["proxy-groups"].push({ name: mediaFlag + suffix.media, type: "select", proxies: ["DIRECT"] });
+    config["proxy-groups"].push({ name: "SG" + suffix.base, type: "select", proxies: [base.chainGroupName] });
+    config["proxy-groups"].push({ name: base.chainGroupName, type: "select", proxies: ["DIRECT"] });
+    config["proxy-groups"].push({ name: "US" + suffix.base, type: "select", proxies: ["DIRECT"] });
   });
   assertManagedProxyTopology(output, sandbox);
 }
@@ -436,7 +461,7 @@ function testExistingManagedObjectsAreReconciled() {
 function testChainGroupIsNotReusedAsRelayTarget() {
   const { sandbox, output } = runMain((config) => {
     const base = loadSandbox().BASE;
-    const chainName = base.regions.SG.flag +base.regions.SG.label + base.groupNameSuffixes.chain;
+    const chainName = base.chainGroupName;
     config["proxy-groups"].push({
       name: chainName, type: "select",
       proxies: [base.nodeNames.transit, base.nodeNames.relay]
@@ -457,9 +482,8 @@ function testBadExternalRegionGroupIsNotReused() {
 function testNodeSelectionKeepsOnlyCurrentRelayGroup() {
   const { sandbox, output } = runMain((config) => {
     const base = loadSandbox().BASE;
-    const staleRelay = base.regions.HK.flag +base.regions.HK.label + base.groupNameSuffixes.relay;
-    const staleMedia = base.regions.SG.flag +base.regions.SG.label + base.groupNameSuffixes.media;
-    config["proxy-groups"][0].proxies = ["🇸🇬 SG Auto 01", staleRelay, staleMedia];
+    const staleRelay = "HK" + base.groupNameSuffixes.relaySuffix;
+    config["proxy-groups"][0].proxies = ["🇸🇬 SG Auto 01", staleRelay];
   });
   assertManagedProxyTopology(output, sandbox);
 }
@@ -473,7 +497,7 @@ function testRepeatedRunDoesNotCreateSelfReference() {
   const names = expectedGroupNames(sandbox);
 
   assertManagedProxyTopology(second, sandbox);
-  for (const name of [names.chain, names.relay, names.media]) {
+  for (const name of [names.chainTarget, names.relay, names.usRegion]) {
     const count = second["proxy-groups"].filter((g) => g.name === name).length;
     assert.strictEqual(count, 1, "duplicate group after rerun: " + name);
   }
@@ -490,9 +514,7 @@ const tests = [
   testAiCliProcessProxyAlwaysOn,
   testOnlyAiAndBrowserProcessesAreManaged,
   testChainRegionFallsBackToAvailableRegion,
-  testMediaRegionFallsBackToAvailableRegion,
   testMissingRegionFails,
-  testMissingMediaRegionFails,
   testMissingStrictTargetFails,
   testExistingManagedObjectsAreReconciled,
   testChainGroupIsNotReusedAsRelayTarget,

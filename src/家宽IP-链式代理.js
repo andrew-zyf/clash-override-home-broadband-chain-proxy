@@ -1,17 +1,15 @@
-// Clash 家宽IP-链式代理覆写脚本
+// 家宽 IP 链式代理覆写脚本
 //
-// 把 AI 整条链路（会话本体 + 登录反机器人 + 订阅支付 + 特性开关上报）锁进家宽 IP 链式出口；
-// 流媒体 / 社交 / IM 走独立 mediaRegion；域内业务直连；其余按订阅默认。
-// DNS / Sniffer / 分流规则三层共用一份 POLICY 分类，规则与解析永远同步。
+// 通过链式代理将 AI 相关流量锁定到家宽 IP，防止 IP 指纹不一致导致封号。
 //
-// 数据流（自上而下）：
+// 1. 三阶防泄漏：本地 DNS 只解析代理节点 → DoH 查询走代理在境外完成 → AI 请求用 Fake-IP 远端解析。
+// 2. 生态链 IP 一致：AI 会话 + STUN/TCP + Arkose + Stripe + Statsig 等全部走同一出口，避免 IP 碎裂。
+// 3. 统一策略覆盖：POLICY 表接管订阅自带规则，防止 GeoIP 漏判导致 DNS 泄漏或 UDP 逃逸。
 //
 //   USER_OPTIONS     用户可调参数（地区 + 浏览器开关）
-//   BASE             运行期常量（地区表、节点名、组名后缀、DoH、规则前缀）
-//   SOURCE_*         按路由意图分桶的 `+.domain` 字面量
-//                      SOURCE_CHAIN / SOURCE_MEDIA / SOURCE_GLOBAL_DEFAULT /
-//                      SOURCE_CN_DIRECT / SOURCE_OVERSEAS_DIRECT /
-//                      SOURCE_LOCAL_DIRECT / SOURCE_NETWORK_DIRECT
+//   BASE             运行期常量（地区表、节点名、组名、DoH 服务器）
+//   CHAIN / MEDIA / CDN / CN / OVERSEAS / LOCAL / NETWORK
+//                    按路由意图分桶的 `+.domain` 字面量
 //   POLICY           单一权威表：每条 entry 写明
 //                      route / dnsZone / sniffer / fakeIpBypass / fallbackFilter
 //                    新增分类只改 POLICY 一处，下游全部自动同步。
@@ -25,7 +23,7 @@
 // 依赖：先跑 `MiyaIP 凭证.js` 把凭证写到 `config._miya`，再跑本脚本。
 // 兼容性：Clash Party 的 JavaScriptCore；只用 ES5 语法。
 //
-// @version 9.2
+// @version 10.0
 
 // ---------------------------------------------------------------------------
 // 用户可调参数
@@ -33,7 +31,6 @@
 
 var USER_OPTIONS = {
   chainRegion: "SG", // AI 家宽出口前一跳地区，可选 US / JP / HK / SG
-  mediaRegion: "US", // 媒体默认地区，可选 US / JP / HK / SG
   routeBrowserToChain: true // 是否让 AI 向浏览器按应用名继续强制走 chainRegion
 };
 
@@ -48,15 +45,14 @@ var BASE = {
     JP: { regex: /🇯🇵|日本|^JP[|丨\- ]/i, label: "日本", flag: "🇯🇵" },
     HK: { regex: /🇭🇰|香港|^HK[|丨\- ]/i, label: "香港", flag: "🇭🇰" },
     SG: { regex: /🇸🇬|新加坡|^SG[|丨\- ]/i, label: "新加坡", flag: "🇸🇬" },
-    TW: { regex: /🇹🇼|台湾|^TW[|丨\- ]/i, label: "台湾", flag: "🇹🇼" },
-    KR: { regex: /🇰🇷|韩国|^KR[|丨\- ]/i, label: "韩国", flag: "🇰🇷" }
+    TW: { regex: /🇹🇼|台湾|^TW[|丨\- ]/i, label: "台湾", flag: "🇹🇼" }
   },
   nodeNames: {
     relay: "自选节点 + 家宽IP",
     transit: "MiyaIP（官方中转）"
   },
   groupNames: {
-    nodeSelection: "节点选择" // 订阅里托管的全局选择组
+    nodeSelection: "办公娱乐好帮手" // 适配用户当前订阅里托管的全局选择组
   },
   ruleTargets: {
     direct: "DIRECT"
@@ -67,13 +63,14 @@ var BASE = {
   urlTestProbeUrl: "http://www.gstatic.com/generate_204",
   miyaProxyNameKeyword: "MiyaIP",
   groupNameSuffixes: {
-    relay: "-AI|链式代理.跳板",
-    chain: "-AI|链式代理.家宽出口",
-    media: "-媒体"
+    base: "节点组"
   },
+  groupNamePrefixes: {
+    base: "az.分区测速."
+  },
+  chainGroupName: "az.核心链路.🔗 链式代理-家宽出口",
   regionFallbackOrder: {
-    chain: ["SG", "TW", "JP", "KR", "US"], // 家宽出口优先低时延亚洲地区，最后再回退到美国
-    media: ["US", "JP", "HK"]              // 媒体优先美区常见流媒体，其次回退到日 / 港
+    chain: ["SG", "TW", "JP", "US"] // 家宽出口优先低时延亚洲地区，最后再回退到美国
   },
   dns: {
     overseas: [
@@ -88,18 +85,18 @@ var BASE = {
   }
 };
 
-// `fallback` 依赖已定义的 `overseas`，单独成行可避免重复写同一组域外 DoH。
+// fallback 在 overseas 基础上追加 Quad9。
 BASE.dns.fallback = BASE.dns.overseas.concat(["https://dns.quad9.net/dns-query"]);
 
 // ---------------------------------------------------------------------------
-// 模式字面量（SOURCE_*）
+// 域名模式
 // ---------------------------------------------------------------------------
 
 // 这里只列"哪些域名属于哪个业务桶"，路由/DNS/sniffer 行为统一在下面的 POLICY 注入。
 // 模式形如 `+.domain`，转成规则时由 `toSuffix` 去掉 `+.` 前缀。
 
 // ---------- Chain · 链式代理 ----------
-var SOURCE_CHAIN = {
+var CHAIN = {
   support: {
     google_core: [
       "+.google.com",
@@ -283,9 +280,8 @@ var SOURCE_CHAIN = {
       "+.pi.ai"              // Inflection / Pi
     ]
   },
-  // AI 会话共享的第三方集成：登录反机器人、第三方鉴权、订阅结算、特性开关与错误上报。
-  // 这些域名由多家 AI 厂商共用，统一随主会话走家宽链路，避免 IP 不一致触发的风控与指纹漂移。
-  // Cloudflare Turnstile (challenges.cloudflare.com) 已被 chain.cloudflare 的 +.cloudflare.com 覆盖。
+  // AI 会话共享的第三方集成（反作弊、鉴权、支付、遥测）。
+  // 这些请求的出口 IP 必须与 AI 主会话一致，否则会触发风控。
   integrations: {
     antibot: [
       "+.arkoselabs.com",  // ChatGPT 登录的 Arkose FunCaptcha（token 绑定客户端 IP）
@@ -373,7 +369,14 @@ var SOURCE_CHAIN = {
 };
 
 // ---------- Global Default · 域外默认代理 ----------
-var SOURCE_GLOBAL_DEFAULT = {
+var CDN = {
+  doh: {
+    core: [
+      "+.dns.google",
+      "+.cloudflare-dns.com",
+      "+.quad9.net"
+    ]
+  },
   cloud: {
     cloudflare: [
       "+.cloudflare-dns.com",
@@ -420,7 +423,9 @@ var SOURCE_GLOBAL_DEFAULT = {
 // 分四类：视频流媒体 / 音乐流媒体 / 社交 / 即时通讯。
 // 这一桶里的所有域名都路由到 `mediaRegion`（默认 US），与家宽 chain 解耦，
 // 也借此跨越对这些站点不友好的网络环境（GFW、地区封锁等）。
-var SOURCE_MEDIA = {
+var MEDIA = {
+  // 按 UI 面板分为 video, music, social, im 四个路由分桶
+  video: {
   // ---- 视频流媒体 ----
   youtube: [
     "+.youtube.com",
@@ -485,8 +490,9 @@ var SOURCE_MEDIA = {
     "+.twitch.tv",
     "+.ttvnw.net",
     "+.jtvnw.net"
-  ],
-
+  ]
+  },
+  music: {
   // ---- 音乐流媒体 ----
   spotify: [
     "+.spotify.com",
@@ -499,8 +505,9 @@ var SOURCE_MEDIA = {
   ],
   bandcamp: [
     "+.bandcamp.com"
-  ],
-
+  ]
+  },
+  social: {
   // ---- 社交 ----
   twitter: [
     "+.twitter.com",
@@ -553,8 +560,9 @@ var SOURCE_MEDIA = {
   niche_communities: [
     "+.goodreads.com",     // 读书
     "+.letterboxd.com"     // 电影日记
-  ],
-
+  ]
+  },
+  im: {
   // ---- 即时通讯 ----
   telegram: [
     "+.telegram.org",
@@ -582,10 +590,11 @@ var SOURCE_MEDIA = {
   signal: [
     "+.signal.org"
   ]
+  }
 };
 
 // ---------- CN Direct · 境内直连 ----------
-var SOURCE_CN_DIRECT = {
+var CN = {
   ai: {
     tongyi: [
       "+.tongyi.aliyun.com",
@@ -774,7 +783,7 @@ var SOURCE_CN_DIRECT = {
 };
 
 // ---------- Local Direct · 本地与推送直连 ----------
-var SOURCE_LOCAL_DIRECT = {
+var LOCAL = {
   local_and_push: [
     "+.push.apple.com",
     "+.lan",
@@ -785,7 +794,7 @@ var SOURCE_LOCAL_DIRECT = {
 };
 
 // ---------- Overseas Direct · 域外 DoH + 直连 ----------
-var SOURCE_OVERSEAS_DIRECT = {
+var OVERSEAS = {
   special: {
     apple: {
       core: [
@@ -810,6 +819,7 @@ var SOURCE_OVERSEAS_DIRECT = {
     }
   },
   global: {
+    // 域内应用，但使用域外 DoH 解析以避免域内 DNS 返回错误结果。
     cnApps: {
       immersive_translate: [
         "+.immersivetranslate.com"
@@ -845,7 +855,7 @@ var SOURCE_OVERSEAS_DIRECT = {
 
 // ---------- Network Direct · 网络地址直连 ----------
 // 私有 / 链路本地 / CGNAT / Tailscale ULA 都走 DIRECT，避免被无意中走代理。
-var SOURCE_NETWORK_DIRECT = {
+var NETWORK = {
   direct: [
     // RFC 1918 私有网络
     { type: "IP-CIDR", value: "10.0.0.0/8", target: BASE.ruleTargets.direct },
@@ -864,7 +874,7 @@ var SOURCE_NETWORK_DIRECT = {
 };
 
 // 端到端样本：声明"这些域名 / 进程必须落到这个出口"。
-//   - 加载期 assertExpectedRoutesCoverage：样本必须能在 SOURCE_* 中匹配。
+//   - 加载期 assertExpectedRoutesCoverage：样本必须能在域名模式中匹配。
 //   - 运行期 validateManagedRouting：每条样本规则的 target 必须正确。
 //   - tests/validate.js：直接读 sandbox.EXPECTED_ROUTES 当端到端期望。
 // 字段：
@@ -1013,88 +1023,103 @@ function shouldRouteBrowserToChain() {
 // 策略表（POLICY）与派生分类
 // ---------------------------------------------------------------------------
 
-// POLICY 是所有域名模式的**单一权威来源**：每条 entry 同时声明
-// 路由 / DNS 分区 / sniffer / fake-ip 绕过 / fallback-filter。
-// 下游 DNS、sniffer、规则、断言都只从 POLICY 投影，没有第二份决策。
+// POLICY — 所有域名模式的单一权威来源。
+// 每条 entry 声明 route / dnsZone / sniffer / fakeIpBypass / fallbackFilter。
+// 下游 DNS、Sniffer、规则、断言都从 POLICY 投影。
 //
 // 字段：
-//   key            稳定标识（仅用于调试与报错）
-//   patterns       `+.domain` 模式数组（已去重）
-//   route          "chain" | "media" | "direct"，省略 = 不生成路由规则
+//   key            标识（调试用）
+//   patterns       `+.domain` 模式数组
+//   route          "chain.*" | "media.*" | "direct" | "proxy"，省略 = 不生成规则
 //   dnsZone        "overseas" | "domestic"，省略 = 不进 nameserver-policy
-//   sniffer        "force" | "skip"，省略 = 不参与 sniffer 配置
-//   fakeIpBypass   true = 进入 fake-ip-filter（解析真实 IP）
-//   fallbackFilter true = 进入 DNS fallback-filter.domain
+//   sniffer        "force" | "skip"，省略 = 不参与 sniffer
+//   fakeIpBypass   true = 进入 fake-ip-filter
+//   fallbackFilter true = 进入 fallback-filter.domain
 //
-// 冲突解决：同一 pattern 既出现在 direct 又出现在 chain/media 时，direct 胜出
-// （chain/media 派生时 excludeStrings(direct)）。
+// 冲突解决：direct 优先于 chain/media（派生时 excludeStrings）。
 function buildPolicy() {
   return [
     // ---- chain · 走家宽出口 ----
     {
-      key: "chain.support", patterns: flattenGroupedPatterns(SOURCE_CHAIN.support),
-      route: "chain", dnsZone: "overseas", sniffer: "force", fallbackFilter: true
+      key: "chain.support", patterns: flattenGroupedPatterns(CHAIN.support),
+      route: "chain.support", dnsZone: "overseas", sniffer: "force", fallbackFilter: true
     },
     {
-      key: "chain.ai", patterns: flattenGroupedPatterns(SOURCE_CHAIN.ai),
-      route: "chain", dnsZone: "overseas", sniffer: "force", fallbackFilter: true
+      key: "chain.ai", patterns: flattenGroupedPatterns(CHAIN.ai),
+      route: "chain.ai", dnsZone: "overseas", sniffer: "force", fallbackFilter: true
     },
     {
-      key: "chain.integrations", patterns: flattenGroupedPatterns(SOURCE_CHAIN.integrations),
-      route: "chain", dnsZone: "overseas", sniffer: "force", fallbackFilter: true
+      key: "chain.integrations", patterns: flattenGroupedPatterns(CHAIN.integrations),
+      route: "chain.integrations", dnsZone: "overseas", sniffer: "force", fallbackFilter: true
     },
     {
-      key: "chain.cloudflare", patterns: flattenGroupedPatterns(SOURCE_CHAIN.force),
-      route: "chain", dnsZone: "overseas", sniffer: "force", fallbackFilter: true
+      key: "chain.cloudflare", patterns: flattenGroupedPatterns(CHAIN.force),
+      route: "chain.cloudflare", dnsZone: "overseas", sniffer: "force", fallbackFilter: true
     },
 
-    // ---- media · 走媒体地区组 ----
+    // ---- media · 走媒体独立选区 ----
     {
-      key: "media", patterns: flattenGroupedPatterns(SOURCE_MEDIA),
-      route: "media", dnsZone: "overseas", fallbackFilter: true
+      key: "media.video", patterns: flattenGroupedPatterns(MEDIA.video),
+      route: "media.video", dnsZone: "overseas", fallbackFilter: true
+    },
+    {
+      key: "media.music", patterns: flattenGroupedPatterns(MEDIA.music),
+      route: "media.music", dnsZone: "overseas", fallbackFilter: true
+    },
+    {
+      key: "media.social", patterns: flattenGroupedPatterns(MEDIA.social),
+      route: "media.social", dnsZone: "overseas", fallbackFilter: true
+    },
+    {
+      key: "media.im", patterns: flattenGroupedPatterns(MEDIA.im),
+      route: "media.im", dnsZone: "overseas", fallbackFilter: true
     },
 
     // ---- 默认代理（不写 route，仅做 DNS / fallback-filter）----
     {
-      key: "default.overseasCloudCdn", patterns: flattenGroupedPatterns(SOURCE_GLOBAL_DEFAULT.cloud),
+      key: "default.doh", patterns: flattenGroupedPatterns(CDN.doh),
+      route: "proxy", dnsZone: "overseas", fallbackFilter: true
+    },
+    {
+      key: "default.overseasCloudCdn", patterns: flattenGroupedPatterns(CDN.cloud),
       dnsZone: "overseas", fallbackFilter: true
     },
 
     // ---- direct · 直连 ----
     {
-      key: "direct.apple", patterns: flattenGroupedPatterns(SOURCE_OVERSEAS_DIRECT.special.apple),
+      key: "direct.apple", patterns: flattenGroupedPatterns(OVERSEAS.special.apple),
       route: "direct", dnsZone: "overseas", fakeIpBypass: true
     },
     {
-      key: "direct.egressCheck", patterns: flattenGroupedPatterns(SOURCE_OVERSEAS_DIRECT.special.egressCheck),
+      key: "direct.egressCheck", patterns: flattenGroupedPatterns(OVERSEAS.special.egressCheck),
       route: "direct", dnsZone: "overseas", fallbackFilter: true
     },
     {
-      key: "direct.overseasApps", patterns: flattenGroupedPatterns(SOURCE_OVERSEAS_DIRECT.global.apps),
+      key: "direct.overseasApps", patterns: flattenGroupedPatterns(OVERSEAS.global.apps),
       route: "direct", dnsZone: "overseas", sniffer: "skip", fallbackFilter: true
     },
     {
-      key: "direct.cnAppsOverseasDoh", patterns: flattenGroupedPatterns(SOURCE_OVERSEAS_DIRECT.global.cnApps),
+      key: "direct.cnAppsOverseasDoh", patterns: flattenGroupedPatterns(OVERSEAS.global.cnApps),
       route: "direct", dnsZone: "overseas", sniffer: "skip", fallbackFilter: true
     },
     {
-      key: "direct.cn.ai", patterns: flattenGroupedPatterns(SOURCE_CN_DIRECT.ai),
+      key: "direct.cn.ai", patterns: flattenGroupedPatterns(CN.ai),
       route: "direct", dnsZone: "domestic"
     },
     {
-      key: "direct.cn.office", patterns: flattenGroupedPatterns(SOURCE_CN_DIRECT.office),
+      key: "direct.cn.office", patterns: flattenGroupedPatterns(CN.office),
       route: "direct", dnsZone: "domestic"
     },
     {
-      key: "direct.cn.cloud", patterns: flattenGroupedPatterns(SOURCE_CN_DIRECT.cloud),
+      key: "direct.cn.cloud", patterns: flattenGroupedPatterns(CN.cloud),
       route: "direct", dnsZone: "domestic"
     },
     {
-      key: "direct.cn.consumer", patterns: flattenGroupedPatterns(SOURCE_CN_DIRECT.consumer),
+      key: "direct.cn.consumer", patterns: flattenGroupedPatterns(CN.consumer),
       route: "direct", dnsZone: "domestic"
     },
     {
-      key: "direct.localAndPush", patterns: flattenGroupedPatterns(SOURCE_LOCAL_DIRECT),
+      key: "direct.localAndPush", patterns: flattenGroupedPatterns(LOCAL),
       route: "direct", dnsZone: "domestic", sniffer: "skip"
     }
   ];
@@ -1132,40 +1157,64 @@ function matchFallbackFilter(entry) { return entry.fallbackFilter === true; }
 //   chain    → 进家宽出口（排除被 direct 抢占的模式）
 //   media    → 媒体地区组
 //   direct   → 全量 DIRECT 模式，用于生成直连规则与 fake-ip/sniffer 判断
+//   proxy    → 进通用代理组（用于强制 DoH 服务器等前跳代理寻址）
 //   sniffer  → force / skip 两侧的嗅探决策
 //   fakeIpBypass → 需要返回真实 IP 的域名（Apple 等）
 function buildDerivedPatterns() {
   var direct = projectPolicyPatterns(matchRoute("direct"));
-  var chain = excludeStrings(projectPolicyPatterns(matchRoute("chain")), direct);
-  var media = excludeStrings(projectPolicyPatterns(matchRoute("media")), direct);
+  var proxy = excludeStrings(projectPolicyPatterns(matchRoute("proxy")), direct);
+  
+  var chainAi = excludeStrings(projectPolicyPatterns(matchRoute("chain.ai")), direct);
+  var chainSupport = excludeStrings(projectPolicyPatterns(matchRoute("chain.support")), direct);
+  var chainIntegrations = excludeStrings(projectPolicyPatterns(matchRoute("chain.integrations")), direct);
+  var chainCloudflare = excludeStrings(projectPolicyPatterns(matchRoute("chain.cloudflare")), direct);
+  var chainAll = mergeStringGroups([chainAi, chainSupport, chainIntegrations, chainCloudflare]);
+  
+  var mediaVideo = excludeStrings(projectPolicyPatterns(matchRoute("media.video")), direct);
+  var mediaMusic = excludeStrings(projectPolicyPatterns(matchRoute("media.music")), direct);
+  var mediaSocial = excludeStrings(projectPolicyPatterns(matchRoute("media.social")), direct);
+  var mediaIm = excludeStrings(projectPolicyPatterns(matchRoute("media.im")), direct);
+  var mediaAll = mergeStringGroups([mediaVideo, mediaMusic, mediaSocial, mediaIm]);
+
   return {
-    chain: chain,
-    media: media,
+    proxy: proxy,
+    chain: {
+      ai: chainAi,
+      support: chainSupport,
+      integrations: mergeStringGroups([chainIntegrations, chainCloudflare]),
+      all: chainAll
+    },
+    media: {
+      video: mediaVideo,
+      music: mediaMusic,
+      social: mediaSocial,
+      im: mediaIm,
+      all: mediaAll
+    },
     direct: direct,
     fakeIpBypass: projectPolicyPatterns(matchFakeIpBypass),
     sniffer: {
-      // chain 条目默认强制嗅探；额外合入所有 sniffer=force 的条目以覆盖不走 chain 的纯嗅探项。
-      force: mergeStringGroups([chain, projectPolicyPatterns(matchSniffer("force"))]),
+      force: mergeStringGroups([chainAll, projectPolicyPatterns(matchSniffer("force"))]),
       skip: projectPolicyPatterns(matchSniffer("skip"))
     }
   };
 }
 
-// 从 SOURCE_CHAIN.apps 展开出三类进程入口：
+// 从 CHAIN.apps 展开出三类进程入口：
 //   aiApps  → 受管 AI 桌面 App + 显式 helper（始终走 chainRegion）
 //   aiCli   → AI 命令行（始终走 chainRegion）
 //   browser → AI 浏览器 + 全部 helper（按 USER_OPTIONS.routeBrowserToChain 决定是否走 chainRegion）
 function buildDerivedProcessNames() {
   return {
     aiApps: expandProcessNamesWithHelpers(
-      SOURCE_CHAIN.apps.ai.apps,
-      SOURCE_CHAIN.apps.ai.helperSuffixes,
-      SOURCE_CHAIN.apps.ai.exact
+      CHAIN.apps.ai.apps,
+      CHAIN.apps.ai.helperSuffixes,
+      CHAIN.apps.ai.exact
     ),
-    aiCli: uniqueStrings(SOURCE_CHAIN.apps.ai.cli.slice()),
+    aiCli: uniqueStrings(CHAIN.apps.ai.cli.slice()),
     browser: expandProcessNamesWithHelpers(
-      SOURCE_CHAIN.apps.browser.apps,
-      SOURCE_CHAIN.apps.browser.helperSuffixes
+      CHAIN.apps.browser.apps,
+      CHAIN.apps.browser.helperSuffixes
     )
   };
 }
@@ -1175,7 +1224,7 @@ var DERIVED = {
   patterns: buildDerivedPatterns(),
   processNames: buildDerivedProcessNames(),
   networkRules: {
-    direct: SOURCE_NETWORK_DIRECT.direct.slice()
+    direct: NETWORK.direct.slice()
   }
 };
 
@@ -1196,14 +1245,14 @@ function assertExpectedRoutesCoverage() {
 
   for (i = 0; i < EXPECTED_ROUTES.toChain.domains.length; i++) {
     sample = EXPECTED_ROUTES.toChain.domains[i];
-    if (!isDomainCoveredBySuffixPatterns(sample, DERIVED.patterns.chain)) {
+    if (!isDomainCoveredBySuffixPatterns(sample, DERIVED.patterns.chain.all)) {
       throw createUserError("toChain 样本未被 chain 源覆盖: " + sample);
     }
   }
 
   for (i = 0; i < EXPECTED_ROUTES.toMedia.domains.length; i++) {
     sample = EXPECTED_ROUTES.toMedia.domains[i];
-    if (!isDomainCoveredBySuffixPatterns(sample, DERIVED.patterns.media)) {
+    if (!isDomainCoveredBySuffixPatterns(sample, DERIVED.patterns.media.all)) {
       throw createUserError("toMedia 样本未被 media 源覆盖: " + sample);
     }
   }
@@ -1215,7 +1264,7 @@ function assertExpectedRoutesCoverage() {
     .concat(EXPECTED_ROUTES.toChain.cliNames);
   for (i = 0; i < procSamples.length; i++) {
     if (!procLookup[procSamples[i]]) {
-      throw createUserError("toChain 样本进程未在 SOURCE_CHAIN.apps 中: " + procSamples[i]);
+      throw createUserError("toChain 样本进程未在 CHAIN.apps 中: " + procSamples[i]);
     }
   }
 }
@@ -1244,11 +1293,11 @@ function buildMediaValidationTargets() {
   return buildValidationTargets("DOMAIN-SUFFIX", EXPECTED_ROUTES.toMedia.domains);
 }
 
-// 校验受管浏览器进程是否继续命中链式代理出口，每个受管 App 都校验主进程名。
+// 校验受管浏览器进程是否命中链式代理出口。
 function buildBrowserValidationTargets() {
   if (!shouldRouteBrowserToChain()) return [];
   var targets = [];
-  var apps = SOURCE_CHAIN.apps.browser.apps;
+  var apps = CHAIN.apps.browser.apps;
   for (var i = 0; i < apps.length; i++) {
     targets.push({ type: "PROCESS-NAME", value: apps[i] });
   }
@@ -1259,14 +1308,13 @@ function buildBrowserValidationTargets() {
 // DNS + Sniffer
 // ---------------------------------------------------------------------------
 
-// 把脚本生成的 DNS 和域名嗅探配置写入主配置。
+// 写入 DNS 和 Sniffer 配置。
 function writeDnsAndSniffer(config, derived) {
   config.dns = buildDnsConfig(derived);
   config.sniffer = buildSnifferConfig(derived);
 }
 
-// 遍历 POLICY，按 `dnsZone` 把每条 entry 的模式绑到对应 DoH。
-// 新增类别时只需在 POLICY 里给新条目加 `dnsZone` 字段，这里无需改动。
+// 从 POLICY 按 dnsZone 生成 nameserver-policy 映射。
 function buildNameserverPolicy() {
   var dohByZone = { overseas: BASE.dns.overseas, domestic: BASE.dns.domestic };
   var policy = {};
@@ -1285,10 +1333,8 @@ function buildNameserverPolicy() {
   return policy;
 }
 
-// 构建需要绕过 `fake-ip` 的域名白名单。
-// 风格约定：能用 `+.` 前缀的统一用 `+.`（匹配域名本身与全部子域）；
-// 仅中部通配（如 `time.*.com`、`xbox.*.microsoft.com`、`stun.*.*`）才保留 glob，
-// 因为 `+.` 不支持中段通配。
+// 构建 fake-ip-filter 白名单。
+// `+.` 匹配域名及子域；中部通配（`time.*.com` 等）保留 glob 写法。
 function buildDnsFakeIpFilter(derived) {
   var localNetworkDomains = [
     "+.push.apple.com",
@@ -1341,8 +1387,9 @@ function buildDnsFakeIpFilter(derived) {
     .concat(homeRouterDomains);
 }
 
-// 所有标记 fallbackFilter 的 POLICY 模式都进 fallback-filter.domain；
-// 配 `geoip-code: CN`，让境内 IP 走 nameserver、其余走 fallback DoH。
+// DNS fallback-filter 配置。
+// AI / DoH / 媒体等高价值域名已在 nameserver-policy 中显式绑定 DoH，
+// 这里兜底处理未被显式覆盖的域名：geoip: true 让非 CN IP 走 fallback DoH。
 function buildDnsFallbackFilter() {
   return {
     geoip: true,
@@ -1380,7 +1427,7 @@ function buildDnsConfig(derived) {
   return dnsConfig;
 }
 
-// 构建域名嗅探配置，继续复用 AI 严格分类与直连跳过项。
+// 构建 Sniffer 配置。
 function buildSnifferConfig(derived) {
   return {
     enable: true,
@@ -1418,14 +1465,15 @@ function normalizeRegionKey(region) {
 // 根据地区键解析地区元数据，并按需提供兜底标签。
 function resolveRegionMeta(region, allowFallbackRegionLabel) {
   var regionKey = normalizeRegionKey(region);
-  if (BASE.regions[regionKey]) return BASE.regions[regionKey];
-  if (!allowFallbackRegionLabel) return null;
-  return { label: region, flag: "🌐" };
+  var source = BASE.regions[regionKey];
+  var meta = source ? { regex: source.regex, label: source.label, flag: source.flag, code: regionKey } : null;
+  if (!meta && allowFallbackRegionLabel) meta = { label: region, flag: "🌐", code: regionKey };
+  return meta;
 }
 
-// 按旗帜、地区标签和后缀拼出代理组名称。
+// 基于地区国旗与中文标签拼出代理组名称（如 分区测速.🇸🇬 新加坡节点组）。
 function buildRegionGroupName(regionMeta, groupNameSuffix) {
-  return regionMeta.flag + regionMeta.label + groupNameSuffix;
+  return BASE.groupNamePrefixes.base + regionMeta.flag + " " + regionMeta.label + groupNameSuffix;
 }
 
 // 根据凭证和端点信息生成一个 MiyaIP HTTP 代理节点。
@@ -1508,23 +1556,17 @@ function upsertRegionUrlTestGroup(proxyGroups, groupName, regionNodeNames) {
   });
 }
 
-// 把脚本生成的地区组写入 `节点选择`，同时剔除带相同后缀的旧地区组（防止地区切换后残留）。
-function writeManagedGroupIntoNodeSelection(config, managedGroupName, managedGroupSuffix) {
+// 将代理组追加到节点选择组。
+function writeManagedGroupIntoNodeSelection(config, managedGroupName) {
   var nodeSelectionGroup = findProxyGroupByName(config["proxy-groups"], BASE.groupNames.nodeSelection);
   if (!nodeSelectionGroup || !nodeSelectionGroup.proxies) return;
 
-  var nextProxyNames = [];
-  for (var i = 0; i < nodeSelectionGroup.proxies.length; i++) {
-    var name = nodeSelectionGroup.proxies[i];
-    if (name === managedGroupName) continue;
-    if (endsWithString(name, managedGroupSuffix)) continue;
-    nextProxyNames.push(name);
-  }
+  var nextProxyNames = [].concat(nodeSelectionGroup.proxies);
   nextProxyNames.push(managedGroupName);
   nodeSelectionGroup.proxies = uniqueStrings(nextProxyNames);
 }
 
-// 向主配置注入家宽出口和官方中转两个 MiyaIP 节点。
+// 注入 MiyaIP 代理节点（家宽出口 + 官方中转）。
 function writeMiyaProxies(config, miyaCredentials) {
   var miyaProxies = [
     buildMiyaProxy(miyaCredentials, BASE.nodeNames.relay, miyaCredentials.relay),
@@ -1541,7 +1583,6 @@ function writeMiyaProxies(config, miyaCredentials) {
 }
 
 // 仅根据订阅节点创建或修正指定地区的 `url-test` 代理组。
-// 当前既用于链式跳板，也用于媒体组选区。
 function writeRegionGroup(config, region, groupNameSuffix) {
   var regionMeta = resolveRegionMeta(region, false);
   if (!regionMeta) return null;
@@ -1595,29 +1636,18 @@ function resolveRegionGroupTarget(config, primaryRegion, fallbackRegions, groupN
   );
 }
 
-// 解析家宽链式代理前一跳应使用的脚本跳板组；首选缺失时自动按 fallback 顺序回退。
+// 解析链式代理跳板组，首选缺失时按 fallback 顺序回退。
 function resolveRelayTarget(config, region) {
   return resolveRegionGroupTarget(
     config,
     region,
     BASE.regionFallbackOrder.chain,
-    BASE.groupNameSuffixes.relay,
+    BASE.groupNameSuffixes.base,
     "chainRegion 节点"
   );
 }
 
-// 解析媒体应使用的普通地区组；首选缺失时自动按 fallback 顺序回退。
-function resolveMediaTarget(config, region) {
-  return resolveRegionGroupTarget(
-    config,
-    region,
-    BASE.regionFallbackOrder.media,
-    BASE.groupNameSuffixes.media,
-    "mediaRegion 媒体节点"
-  );
-}
-
-// 给家宽出口节点绑定拨号前置代理，并清理官方中转节点的拨号代理。
+// 绑定 dialer-proxy：家宽出口节点绑到跳板组，官方中转节点清除绑定。
 function writeDialerProxy(config, relayTarget) {
   var relayProxy = findProxyByName(config.proxies, BASE.nodeNames.relay);
   if (relayProxy) {
@@ -1629,13 +1659,9 @@ function writeDialerProxy(config, relayTarget) {
   if (transitProxy) delete transitProxy["dialer-proxy"]; // 官方中转节点不挂 dialer-proxy
 }
 
-// 确保存在一个承载 MiyaIP 官方中转与家宽出口的 AI 家宽出口组。
+// 创建链式出口 select 组（MiyaIP 官方中转 / 家宽出口二选一）。
 function writeChainGroup(config, region) {
-  var regionMeta = resolveRegionMeta(region, true);
-  var chainGroupName = buildRegionGroupName(
-    regionMeta,
-    BASE.groupNameSuffixes.chain
-  );
+  var chainGroupName = BASE.chainGroupName;
 
   upsertNamedItem(config["proxy-groups"], {
     name: chainGroupName,
@@ -1646,31 +1672,82 @@ function writeChainGroup(config, region) {
   return chainGroupName;
 }
 
-// 统一解析本轮注入所需的关键目标，减少主流程里的状态分散。
-// 这里会同时收敛链式跳板、AI 家宽出口和媒体组选区。
-function resolveRoutingTargets(config, chainRegion, mediaRegion) {
+// UI 面板代理组名常量。
+var UI_GROUPS = {
+  ai: "az.严管调度.🤖 AI 高敏阵列",
+  support: "az.严管调度.🛠️ 支撑平台",
+  integrations: "az.严管调度.🛡️ 生态域集成",
+  video: "az.其他调度.🎬 视频流媒体",
+  music: "az.其他调度.🎵 音乐播客",
+  social: "az.其他调度.🌐 社交长文",
+  im: "az.其他调度.💬 即时通讯"
+};
+
+// 写入 UI 面板策略组。
+function writeExpandedProxyGroups(config, strictAiTarget, regionalTargets) {
+  var proxyGroups = config["proxy-groups"];
+  var baseNodeSelection = BASE.groupNames.nodeSelection;
+  
+  var mediaChoices = [];
+  var predefinedOrder = ["US", "HK", "JP", "TW"];
+  for (var j = 0; j < predefinedOrder.length; j++) {
+    var target = regionalTargets[predefinedOrder[j]];
+    if (target) mediaChoices.push(target);
+  }
+  mediaChoices.push(baseNodeSelection);
+
+  var aiChoices = [strictAiTarget];
+
+  var subgroups = [
+    { name: UI_GROUPS.ai, type: "select", proxies: aiChoices },
+    { name: UI_GROUPS.support, type: "select", proxies: aiChoices },
+    { name: UI_GROUPS.integrations, type: "select", proxies: aiChoices },
+    { name: UI_GROUPS.video, type: "select", proxies: mediaChoices },
+    { name: UI_GROUPS.music, type: "select", proxies: mediaChoices },
+    { name: UI_GROUPS.social, type: "select", proxies: mediaChoices },
+    { name: UI_GROUPS.im, type: "select", proxies: mediaChoices }
+  ];
+  for (var i = 0; i < subgroups.length; i++) {
+    upsertNamedItem(proxyGroups, subgroups[i]);
+  }
+}
+
+// 解析路由目标：创建地区组、链式出口组、UI 面板组。
+function resolveRoutingTargets(config, chainRegion) {
   var relayResolution = resolveRelayTarget(config, chainRegion);
-  writeManagedGroupIntoNodeSelection(config, relayResolution.target, BASE.groupNameSuffixes.relay);
   var chainGroupName = writeChainGroup(config, relayResolution.region);
-  var mediaResolution = resolveMediaTarget(config, mediaRegion);
-  writeManagedGroupIntoNodeSelection(config, mediaResolution.target, BASE.groupNameSuffixes.media);
+  
+  writeManagedGroupIntoNodeSelection(config, relayResolution.target);
+  
+  var regionalTargets = {};
+    // 为所有已定义地区生成标准 url-test 组
+  var definedRegions = ["US", "JP", "HK", "SG", "TW"];
+  for (var i = 0; i < definedRegions.length; i++) {
+    var code = definedRegions[i];
+    var standardGroup = writeRegionGroup(config, code, BASE.groupNameSuffixes.base);
+    if (standardGroup) {
+      writeManagedGroupIntoNodeSelection(config, standardGroup);
+      regionalTargets[code] = standardGroup;
+    }
+  }
+
+  // 注入 UI 面板分组
+  writeExpandedProxyGroups(config, chainGroupName, regionalTargets);
+  
   return {
     relayTarget: relayResolution.target,
     relayRegion: relayResolution.region,
     chainGroupName: chainGroupName,
-    strictAiTarget: chainGroupName,
-    mediaTarget: mediaResolution.target,
-    mediaRegion: mediaResolution.region
+    strictAiTarget: chainGroupName
   };
 }
 
-// 把拨号代理绑定和受管规则注入收口到一个装配步骤。
+// 写入 dialer-proxy 绑定和分流规则。
 function writeManagedRouting(config, routingTargets, derived) {
   writeDialerProxy(config, routingTargets.relayTarget);
   writeManagedRules(
     config,
     routingTargets.strictAiTarget,
-    routingTargets.mediaTarget,
     derived
   );
 }
@@ -1707,12 +1784,11 @@ function dedupeRulesByIdentity(ruleLines) {
   return deduped;
 }
 
-// 按固定优先级拼出严格 AI 规则、媒体组选区、直连保留项和链式浏览器规则。
-// 浏览器进程规则刻意放在媒体 / 直连域名规则之后，避免受管浏览器压过这些更具体的匹配。
-// 段内各自去重，段间顺序即优先级——首次出现的目标胜出。
-function buildManagedRules(strictAiTarget, mediaTarget, derived) {
+// 拼接所有管理规则。顺序即优先级，浏览器进程规则放在最后避免压过更具体的域名匹配。
+function buildManagedRules(strictAiTarget, derived) {
   var concatenated = buildStrictChainRules(strictAiTarget, derived)
-    .concat(buildMediaRules(mediaTarget, derived))
+    .concat(buildMediaRules(derived))
+    .concat(buildProxyRules(derived))
     .concat(buildDirectRules(derived))
     .concat(buildBrowserChainRules(strictAiTarget, derived));
   return dedupeRulesByIdentity(concatenated);
@@ -1755,14 +1831,13 @@ function splitMatchFallback(ruleLines) {
   return { nonMatch: nonMatch, matchTail: matchTail };
 }
 
-// 注入管理规则并整体置顶，同时保证 MATCH 兜底始终在末尾。
+// 注入管理规则（置顶），MATCH 兜底保持在末尾。
 function writeManagedRules(
   config,
   strictAiTarget,
-  mediaTarget,
   derived
 ) {
-  var managedRules = buildManagedRules(strictAiTarget, mediaTarget, derived);
+  var managedRules = buildManagedRules(strictAiTarget, derived);
   var managedRuleIdentities = buildRuleIdentityLookup(managedRules);
   var remainingRules = filterConflictingRules(config.rules, managedRuleIdentities);
   var split = splitMatchFallback(remainingRules);
@@ -1803,15 +1878,28 @@ function buildBrowserChainProcessGroups(derived) {
   return [derived.processNames.browser];
 }
 
-// 生成进家宽出口的所有规则：受管 AI 进程 + AI CLI + 全部 chain 域名。
-// 段内不去重——跨段去重由 `buildManagedRules` 末端统一完成。
+// 生成 chain 路由规则：受管进程 + AI CLI + chain 域名。
 function buildStrictChainRules(strictAiTarget, derived) {
   var ruleLines = [];
   var processGroups = buildStrictProcessGroups(derived);
   for (var i = 0; i < processGroups.length; i++) {
-    appendProcessRules(ruleLines, processGroups[i], strictAiTarget);
+    appendProcessRules(ruleLines, processGroups[i], UI_GROUPS.ai); // 统一丢向 AI 可视化面板
   }
-  appendSuffixRules(ruleLines, derived.patterns.chain, strictAiTarget);
+  
+  appendSuffixRules(ruleLines, derived.patterns.chain.ai, UI_GROUPS.ai);
+  appendSuffixRules(ruleLines, derived.patterns.chain.support, UI_GROUPS.support);
+  appendSuffixRules(ruleLines, derived.patterns.chain.integrations, UI_GROUPS.integrations);
+  
+  // 用 DOMAIN-KEYWORD 匹配 STUN/TURN，防止 WebRTC P2P 打洞泄漏真实 IP。
+  appendTypedRules(ruleLines, ["stun", "turn"], "DOMAIN-KEYWORD", UI_GROUPS.ai);
+
+  return ruleLines;
+}
+
+// 生成 DoH 端点的代理规则，确保 DNS 查询在境外加密隧道内完成。
+function buildProxyRules(derived) {
+  var ruleLines = [];
+  appendSuffixRules(ruleLines, derived.patterns.proxy, BASE.groupNames.nodeSelection);
   return ruleLines;
 }
 
@@ -1820,15 +1908,18 @@ function buildBrowserChainRules(browserTarget, derived) {
   var ruleLines = [];
   var processGroups = buildBrowserChainProcessGroups(derived);
   for (var i = 0; i < processGroups.length; i++) {
-    appendProcessRules(ruleLines, processGroups[i], browserTarget);
+    appendProcessRules(ruleLines, processGroups[i], UI_GROUPS.ai); // 统一丢向 AI 可视化面板
   }
   return ruleLines;
 }
 
 // 生成媒体组选区规则，只承载媒体域名。
-function buildMediaRules(mediaTarget, derived) {
+function buildMediaRules(derived) {
   var ruleLines = [];
-  appendSuffixRules(ruleLines, derived.patterns.media, mediaTarget);
+  appendSuffixRules(ruleLines, derived.patterns.media.video, UI_GROUPS.video);
+  appendSuffixRules(ruleLines, derived.patterns.media.music, UI_GROUPS.music);
+  appendSuffixRules(ruleLines, derived.patterns.media.social, UI_GROUPS.social);
+  appendSuffixRules(ruleLines, derived.patterns.media.im, UI_GROUPS.im);
   return ruleLines;
 }
 
@@ -1844,11 +1935,13 @@ function buildDirectRules(derived) {
 }
 
 // 基于预构建的规则行查找表 O(1) 断言管理规则是否命中预期目标。
-function assertManagedRuleTarget(ruleLineLookup, type, value, target) {
-  var ruleLine = type + "," + value + "," + target;
-  if (ruleLineLookup[ruleLine]) return;
+function assertManagedRuleTargetExpanded(ruleLineLookup, type, value, validTargets) {
+  for (var i = 0; i < validTargets.length; i++) {
+    var ruleLine = type + "," + value + "," + validTargets[i];
+    if (ruleLineLookup[ruleLine]) return;
+  }
   throw createUserError(
-    "关键规则未正确写入: " + ruleLine + "，请检查 chainRegion / mediaRegion 和订阅代理组"
+    "关键规则未正确写入: " + type + "," + value + "（未查到映射至合规的可视化分组），请检查脚本源数据覆盖"
   );
 }
 
@@ -1862,18 +1955,14 @@ function haveSameStringSet(values, expectedValues) {
   return true;
 }
 
-// 断言三元目标关系：strictAi = chain，media ≠ chain，relay ≠ chain。
+// 断言路由目标一致性：strictAi = chain，relay ≠ chain。
 function assertRoutingTargetCoherence(routingTargets) {
   if (routingTargets.strictAiTarget !== routingTargets.chainGroupName) {
     throw createUserError(
       "域外 AI 与支撑平台未直接指向当前 chainRegion 出口，请检查 chainRegion 或代理组注入逻辑"
     );
   }
-  if (routingTargets.mediaTarget === routingTargets.chainGroupName) {
-    throw createUserError(
-      "媒体组选区错误复用了家宽出口组，请检查 mediaRegion 或媒体组选区注入逻辑"
-    );
-  }
+  // 媒体组已下放到独立阵列，不再验证 mediaTarget 互斥
   if (routingTargets.relayTarget === routingTargets.chainGroupName) {
     throw createUserError(
       "当前 chainRegion 跳板错误复用了家宽出口组，请检查地区代理组复用逻辑"
@@ -1881,21 +1970,16 @@ function assertRoutingTargetCoherence(routingTargets) {
   }
 }
 
-// 断言跳板组与媒体组在节点/代理组中均存在。
+// 断言跳板组在节点/代理组中存在。
 function assertRoutingTargetsExist(config, routingTargets) {
   if (!hasProxyOrGroup(config, routingTargets.relayTarget)) {
     throw createUserError(
       "当前 chainRegion 跳板不存在，请检查 chainRegion 和订阅代理组"
     );
   }
-  if (!hasProxyOrGroup(config, routingTargets.mediaTarget)) {
-    throw createUserError(
-      "当前 mediaRegion 媒体组选区不存在，请检查 mediaRegion 和订阅代理组"
-    );
-  }
 }
 
-// 断言家宽出口与官方中转节点的 dialer-proxy 状态。
+// 断言 dialer-proxy 绑定状态。
 function assertDialerBindings(config, routingTargets) {
   var relayProxy = findProxyByName(config.proxies, BASE.nodeNames.relay);
   if (!relayProxy || relayProxy["dialer-proxy"] !== routingTargets.relayTarget) {
@@ -1926,54 +2010,37 @@ function assertChainGroupShape(config, chainGroupName) {
   }
 }
 
-// 断言媒体组 shape：必须是 url-test、非空、且不含 MiyaIP 节点。
-function assertMediaGroupShape(config, mediaTarget) {
-  var mediaGroup = findProxyGroupByName(config["proxy-groups"], mediaTarget);
-  if (
-    !mediaGroup ||
-    mediaGroup.type !== "url-test" ||
-    !mediaGroup.proxies ||
-    mediaGroup.proxies.length === 0 ||
-    mediaGroup.proxies.indexOf(BASE.nodeNames.relay) >= 0 ||
-    mediaGroup.proxies.indexOf(BASE.nodeNames.transit) >= 0
-  ) {
-    throw createUserError(
-      "当前 mediaRegion 的媒体组选区内容异常，请检查媒体组选区注入逻辑"
-    );
-  }
-}
-
-// 逐条断言一批校验目标在最终规则里命中预期 target。
-function assertRuleTargetBatch(ruleLineLookup, validationTargets, expectedTarget) {
+// 逐条断言一批校验目标在最终规则里命中预期合规集合的任何一个。
+function assertRuleTargetBatchExpanded(ruleLineLookup, validationTargets, validTargets) {
   for (var i = 0; i < validationTargets.length; i++) {
-    assertManagedRuleTarget(
+    assertManagedRuleTargetExpanded(
       ruleLineLookup,
       validationTargets[i].type,
       validationTargets[i].value,
-      expectedTarget
+      validTargets
     );
   }
 }
 
-// 验证关键 AI 家宽、链式浏览器与媒体组选区规则目标，避免静默泄漏或错误地区回退。
+// 验证关键规则目标是否正确写入。
 function validateManagedRouting(config, routingTargets) {
   assertRoutingTargetCoherence(routingTargets);
   assertRoutingTargetsExist(config, routingTargets);
   assertDialerBindings(config, routingTargets);
   assertChainGroupShape(config, routingTargets.chainGroupName);
-  assertMediaGroupShape(config, routingTargets.mediaTarget);
 
   var ruleLineLookup = buildStringLookup(config.rules);
-  assertRuleTargetBatch(ruleLineLookup, buildStrictValidationTargets(), routingTargets.strictAiTarget);
-  assertRuleTargetBatch(ruleLineLookup, buildBrowserValidationTargets(), routingTargets.strictAiTarget);
-  assertRuleTargetBatch(ruleLineLookup, buildMediaValidationTargets(), routingTargets.mediaTarget);
+  // 断言规则落在正确的 UI 分组中
+  assertRuleTargetBatchExpanded(ruleLineLookup, buildStrictValidationTargets(), [UI_GROUPS.ai, UI_GROUPS.support, UI_GROUPS.integrations]);
+  assertRuleTargetBatchExpanded(ruleLineLookup, buildBrowserValidationTargets(), [UI_GROUPS.ai]);
+  assertRuleTargetBatchExpanded(ruleLineLookup, buildMediaValidationTargets(), [UI_GROUPS.video, UI_GROUPS.music, UI_GROUPS.social, UI_GROUPS.im]);
 }
 
 // ---------------------------------------------------------------------------
 // 主流程入口
 // ---------------------------------------------------------------------------
 
-// 读取并移除注入到 `config._miya` 的 MiyaIP 凭证。
+// 读取并移除 MiyaIP 凭证（防止泄漏到最终配置）。
 function takeMiyaCredentials(config) {
   if (!config._miya) {
     throw createUserError(
@@ -1985,8 +2052,7 @@ function takeMiyaCredentials(config) {
   return miyaCredentials;
 }
 
-// 按初始化、DNS/Sniffer、代理链路、规则注入、最终校验的顺序装配输出配置。
-// `derivedOverride` 可选；测试可传入 stub 以隔离源数据依赖，生产路径默认使用模块级 `DERIVED`。
+// 主入口。装配顺序：容器 → DNS/Sniffer → MiyaIP 节点 → 路由目标 → 规则 → 校验。
 function main(config, derivedOverride) {
   var derived = derivedOverride || DERIVED;
   var miyaCredentials = takeMiyaCredentials(config); // 先取出并隐藏凭证
@@ -1998,8 +2064,7 @@ function main(config, derivedOverride) {
 
   routingTargets = resolveRoutingTargets(
     config,
-    USER_OPTIONS.chainRegion,
-    USER_OPTIONS.mediaRegion
+    USER_OPTIONS.chainRegion
   ); // 解析链路目标
   writeManagedRouting(config, routingTargets, derived); // 写入拨号与规则
   validateManagedRouting(config, routingTargets); // 校验关键目标
