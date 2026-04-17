@@ -89,17 +89,17 @@ var USER_OPTIONS = {
 
 脚本会注入以下代理组：
 
-| 分类 | 代理组名称 | 类型 | 说明 |
-|---|---|---|---|
-| **核心链路** | `az.核心链路.🔗 链式代理-家宽出口` | `select` | MiyaIP 家宽出口 / 官方中转二选一，`dialer-proxy` 指向同地区的分区测速组 |
-| **分区测速** | `az.分区测速.🇸🇬 新加坡节点组` / `az.分区测速.🇺🇸 美国节点组` / ... | `url-test` | 5 个地区节点池自动生成，挂载到节点选择组 |
-| **严管调度** | `az.严管调度.🤖 AI 高敏阵列` | `select` | AI 流量，锁定到链式代理-家宽出口 |
-| **严管调度** | `az.严管调度.🛠️ 支撑平台` | `select` | 开发平台流量，锁定到链式代理-家宽出口 |
-| **严管调度** | `az.严管调度.🛡️ 生态域集成` | `select` | 支付 / 验证 / 遥测流量，锁定到链式代理-家宽出口 |
-| **其他调度** | `az.其他调度.🎬 视频流媒体` | `select` | 视频流量，默认 US，可切换地区 |
-| **其他调度** | `az.其他调度.🎵 音乐播客` | `select` | 音频流量 |
-| **其他调度** | `az.其他调度.🌐 社交长文` | `select` | 社交平台流量 |
-| **其他调度** | `az.其他调度.💬 即时通讯` | `select` | IM 流量 |
+| 代理组名称 | 类型 | 说明 |
+|---|---|---|
+| `az.核心链路.🔗 链式代理-家宽出口` | `select` | MiyaIP 家宽出口 / 官方中转二选一，`dialer-proxy` 指向同地区的分区测速组 |
+| `az.分区测速.🇺🇸 美国节点组`<br>`az.分区测速.🇯🇵 日本节点组`<br>`az.分区测速.🇭🇰 香港节点组`<br>`az.分区测速.🇸🇬 新加坡节点组`<br>`az.分区测速.🇹🇼 台湾节点组` | `url-test` | 5 个地区节点池自动生成，挂载到节点选择组。定时测速，自动选择最低延迟节点 |
+| `az.严管调度.🤖 AI 高敏阵列` | `select` | AI 流量，锁定到链式代理-家宽出口 |
+| `az.严管调度.🛠️ 支撑平台` | `select` | 开发平台流量，锁定到链式代理-家宽出口 |
+| `az.严管调度.🛡️ 生态域集成` | `select` | 支付 / 验证 / 遥测流量，锁定到链式代理-家宽出口 |
+| `az.其他调度.🎬 视频流媒体` | `select` | 视频流量，默认 US，可切换地区 |
+| `az.其他调度.🎵 音乐播客` | `select` | 音频流量 |
+| `az.其他调度.🌐 社交长文` | `select` | 社交平台流量 |
+| `az.其他调度.💬 即时通讯` | `select` | IM 流量 |
 
 改 `chainRegion` 后组名自动跟着变；首选地区没节点时按 fallback 顺序回退。
 
@@ -109,8 +109,6 @@ var USER_OPTIONS = {
 
 - **报错 `缺少 config._miya`** — 覆写顺序反了。把 `MiyaIP 凭证.js` 拖到主脚本前面，确认凭证已填好。
 - **报错 `未找到可用的 chainRegion 节点`** — 订阅中没有可识别的目标地区节点。确认至少有一个 `US / JP / HK / SG / TW` 节点，且节点名能被 `BASE.regions[XX].regex` 匹配（默认识别国旗 emoji、中文地区名、`US-` / `JP-` 等前缀）。
-- **机场把 SG 节点叫 `Singapore`** — 在 `BASE.regions.SG.regex` 中添加 `|Singapore`。
-- **想加新地区（如 `DE`）** — 在 `BASE.regions` 添加一行（regex / label / flag），按需加入 `BASE.regionFallbackOrder.chain`，下游代理组、规则、DNS 自动跟上。
 
 ### 升级 / 卸载
 
@@ -196,21 +194,21 @@ flowchart LR
 
 ### 路由对照表
 
-| SOURCE | 内容 | DNS | 出口 |
+| 出口 | SOURCE | DNS | 内容 |
 |---|---|---|---|
-| `CHAIN.ai` | Anthropic / OpenAI / Google AI / Perplexity / Cursor / xAI / Meta AI<br>OpenRouter / Antigravity / Mistral / Hugging Face / Replicate / Groq<br>Together / ElevenLabs / Midjourney / Runway / Stability / Ideogram<br>Civitai / Character.ai / Pi / You / Phind / Kagi | 域外 DoH | `az.严管调度.🤖 AI 高敏阵列` |
-| `CHAIN.support` | Google / Microsoft / GitHub / GitLab / Atlassian<br>npm / PyPI / crates.io / Docker Hub / RubyGems<br>Vercel / Netlify / Supabase / Fly.io / Render / Railway<br>JetBrains / Stack Overflow / MDN / Read the Docs / GitBook | 域外 DoH | `az.严管调度.🛠️ 支撑平台` |
-| `CHAIN.integrations` | 反机器人：Arkose / FunCaptcha / reCAPTCHA / hCaptcha<br>鉴权：Auth0 / Clerk / Okta<br>支付：Stripe / PayPal / Paddle / Lemon Squeezy<br>遥测：Statsig / Sentry / PostHog / Segment / Mixpanel / Amplitude / Datadog<br>基础设施：Cloudflare（含 Turnstile） | 域外 DoH | `az.严管调度.🛡️ 生态域集成` |
-| `CHAIN.apps` | 桌面 App：Claude / ChatGPT / Perplexity / Cursor / Quotio<br>AI 浏览器：Dia / Atlas / SunBrowser<br>CLI：`claude` / `gemini` / `codex` | — | `az.严管调度.🤖 AI 高敏阵列`（按进程名） |
-| `MEDIA.video` | YouTube / Netflix / Disney+ / HBO Max / Hulu / Prime Video / Twitch<br>Peacock / Paramount+ / Crunchyroll / Vimeo / Dailymotion | 域外 DoH | `az.其他调度.🎬 视频流媒体` |
-| `MEDIA.music` | Spotify / SoundCloud / Bandcamp | 域外 DoH | `az.其他调度.🎵 音乐播客` |
-| `MEDIA.social` | X / Meta (Facebook / Instagram / Threads) / Reddit / TikTok<br>Snapchat / Pinterest / Bluesky / Tumblr<br>Medium / Substack / Patreon / Goodreads / Letterboxd | 域外 DoH | `az.其他调度.🌐 社交长文` |
-| `MEDIA.im` | Telegram / Discord / LINE / WhatsApp / Signal | 域外 DoH | `az.其他调度.💬 即时通讯` |
-| `CDN` | DoH：dns.google / cloudflare-dns.com / quad9.net<br>CDN：Cloudflare / AWS / CloudFront / Fastly / Akamai<br>Azure CDN / jsDelivr / Bunny / Cloudinary | 域外 DoH | 默认代理 |
-| `CN` | AI：DeepSeek / Doubao / MiniMax / Baichuan / Stepfun / 通义 / Moonshot / 智谱 / SiliconFlow<br>办公：腾讯 / 钉钉 / 飞书 / WPS<br>云：阿里云 / 腾讯云 / 火山引擎 / 华为云 / 百度云 / 京东云 / 七牛 / 又拍 / 网宿 / 天翼 / 金山<br>消费：百度 / Bilibili / 微博 / 知乎 / 小红书 / 抖音 / 快手<br>网易 / 爱奇艺 / 优酷 / 芒果TV / 搜狐<br>淘宝 / 天猫 / 京东 / 拼多多 / 美团 / 大众点评 / 米哈游 | 域内 DoH | `DIRECT` |
-| `OVERSEAS` | Apple / iCloud / 出口验证（ip.sb / ifconfig.me / ipinfo.io / ping0.cc）<br>沉浸式翻译 / MinerU（域内应用，因域内 DNS 解析异常而使用域外 DoH）<br>Tailscale / ZeroTier / Plex / Synology / Typeless | 域外 DoH | `DIRECT` |
-| `LOCAL` | Apple 推送 / `.lan` / `.local` / `.localhost` / `.home.arpa` | 域内 DoH | `DIRECT` |
-| `NETWORK` | RFC 1918（10/8, 172.16/12, 192.168/16）<br>链路本地（169.254/16, fe80::/10）<br>CGNAT（100.64/10）/ Tailscale magic IP<br>IPv6 ULA（fc00::/7） | — | `DIRECT` |
+| `az.严管调度.🤖 AI 高敏阵列` | `CHAIN.ai` | 域外 DoH | Anthropic / OpenAI / Google AI / Perplexity / Cursor / xAI / Meta AI<br>OpenRouter / Antigravity / Mistral / Hugging Face / Replicate / Groq<br>Together / ElevenLabs / Midjourney / Runway / Stability / Ideogram<br>Civitai / Character.ai / Pi / You / Phind / Kagi |
+| `az.严管调度.🛠️ 支撑平台` | `CHAIN.support` | 域外 DoH | Google / Microsoft / GitHub / GitLab / Atlassian<br>npm / PyPI / crates.io / Docker Hub / RubyGems<br>Vercel / Netlify / Supabase / Fly.io / Render / Railway<br>JetBrains / Stack Overflow / MDN / Read the Docs / GitBook |
+| `az.严管调度.🛡️ 生态域集成` | `CHAIN.integrations` | 域外 DoH | 反机器人：Arkose / FunCaptcha / reCAPTCHA / hCaptcha<br>鉴权：Auth0 / Clerk / Okta<br>支付：Stripe / PayPal / Paddle / Lemon Squeezy<br>遥测：Statsig / Sentry / PostHog / Segment / Mixpanel / Amplitude / Datadog<br>基础设施：Cloudflare（含 Turnstile） |
+| `az.严管调度.🤖 AI 高敏阵列`（按进程名） | `CHAIN.apps` | — | 桌面 App：Claude / ChatGPT / Perplexity / Cursor / Quotio<br>AI 浏览器：Dia / Atlas / SunBrowser<br>CLI：`claude` / `gemini` / `codex` |
+| `az.其他调度.🎬 视频流媒体` | `MEDIA.video` | 域外 DoH | YouTube / Netflix / Disney+ / HBO Max / Hulu / Prime Video / Twitch<br>Peacock / Paramount+ / Crunchyroll / Vimeo / Dailymotion |
+| `az.其他调度.🎵 音乐播客` | `MEDIA.music` | 域外 DoH | Spotify / SoundCloud / Bandcamp |
+| `az.其他调度.🌐 社交长文` | `MEDIA.social` | 域外 DoH | X / Meta (Facebook / Instagram / Threads) / Reddit / TikTok<br>Snapchat / Pinterest / Bluesky / Tumblr<br>Medium / Substack / Patreon / Goodreads / Letterboxd |
+| `az.其他调度.💬 即时通讯` | `MEDIA.im` | 域外 DoH | Telegram / Discord / LINE / WhatsApp / Signal |
+| 默认代理 | `CDN` | 域外 DoH | DoH：dns.google / cloudflare-dns.com / quad9.net<br>CDN：Cloudflare / AWS / CloudFront / Fastly / Akamai<br>Azure CDN / jsDelivr / Bunny / Cloudinary |
+| `DIRECT` | `CN` | 域内 DoH | AI：DeepSeek / Doubao / MiniMax / Baichuan / Stepfun / 通义 / Moonshot / 智谱 / SiliconFlow<br>办公：腾讯 / 钉钉 / 飞书 / WPS<br>云：阿里云 / 腾讯云 / 火山引擎 / 华为云 / 百度云 / 京东云 / 七牛 / 又拍 / 网宿 / 天翼 / 金山<br>消费：百度 / Bilibili / 微博 / 知乎 / 小红书 / 抖音 / 快手<br>网易 / 爱奇艺 / 优酷 / 芒果TV / 搜狐<br>淘宝 / 天猫 / 京东 / 拼多多 / 美团 / 大众点评 / 米哈游 |
+| `DIRECT` | `OVERSEAS` | 域外 DoH | Apple / iCloud / 出口验证（ip.sb / ifconfig.me / ipinfo.io / ping0.cc）<br>沉浸式翻译 / MinerU（域内应用，因域内 DNS 解析异常而使用域外 DoH）<br>Tailscale / ZeroTier / Plex / Synology / Typeless |
+| `DIRECT` | `LOCAL` | 域内 DoH | Apple 推送 / `.lan` / `.local` / `.localhost` / `.home.arpa` |
+| `DIRECT` | `NETWORK` | — | RFC 1918（10/8, 172.16/12, 192.168/16）<br>链路本地（169.254/16, fe80::/10）<br>CGNAT（100.64/10）/ Tailscale magic IP<br>IPv6 ULA（fc00::/7） |
 
 修改归类只需改 `POLICY` 一处，`nameserver-policy` / 分流规则 / Sniffer / `fallback-filter` 自动同步。
 
