@@ -179,9 +179,30 @@ flowchart LR
 |---|---|---|
 | `nameserver-policy` | `dnsZone` | `"overseas"` → 域外 DoH；`"domestic"` → 域内 DoH |
 | `fake-ip-filter` | `fakeIpBypass` | Apple 推送、NTP、STUN、游戏主机等对真实 IP 敏感的域名 |
-| `force-domain` | `sniffer: "force"` | chain 路由域名 — IP-only / QUIC 缺少 SNI，强制嗅探确保命中规则 |
-| `skip-domain` | `sniffer: "skip"` | Tailscale / Plex 等直连应用 — 需保留原始 IP，嗅探会破坏 P2P 打洞 |
+| `force-domain` | `sniffer: "force"` | chain 域名 + Cloudflare — 强制从 SNI 恢复域名，防止漏到 MATCH（详见下方 Sniffer 章节） |
+| `skip-domain` | `sniffer: "skip"` | Tailscale / Plex / Apple 推送等 — 保留 IP 语义，嗅探反而破坏 P2P 打洞 |
 | `fallback-filter` | `fallbackFilter` | 兜底：非 CN IP 走域外 DoH（`geoip-code: CN`） |
+
+### Sniffer — Fake-IP 模式的安全网
+
+Clash 在 `enhanced-mode: fake-ip` 下，客户端查 DNS 时直接返回一个假地址（`198.18.x.x`），不等真实解析完成。连接到达时，Clash 通常能从内部映射表反查出域名，用域名去匹配分流规则。
+
+但有些场景映射会丢失或根本不存在：
+
+- Fake-IP 缓存过期后，应用复用了旧连接里的 IP
+- QUIC (HTTP/3) 跳过 DNS，直接用上次缓存的 IP 发起 UDP 连接
+- 某些应用硬编码 IP，从不走 DNS
+
+这时 Clash 只看到一个对某 IP 的连接，没有域名 → 所有 `DOMAIN-SUFFIX` 规则都匹配不了 → 流量落到 `MATCH` 兜底 → **走错出口**。对于 AI 域名，这意味着流量可能绕过链式代理，直接暴露当前 IP。
+
+**Sniffer 的作用：** 在转发之前，偷看（sniff）握手包的头几个字节，从 TLS ClientHello 的 SNI 字段 / HTTP 的 Host 头 / QUIC 握手中提取出真实域名，让规则重新命中。
+
+脚本通过 POLICY 的 `sniffer` 字段自动生成两个列表：
+
+| 列表 | POLICY 字段 | 包含谁 | 为什么 |
+|---|---|---|---|
+| `force-domain` | `sniffer: "force"` | 所有 chain 路由域名 + Cloudflare | 确保即使映射丢失，AI 流量也能从 SNI 恢复域名 → 命中链式代理规则，不漏到 MATCH |
+| `skip-domain` | `sniffer: "skip"` | Tailscale / ZeroTier / Plex / Synology / Apple 推送 / 局域网 | 这些服务**故意**用 IP 语义工作（P2P 打洞、推送通道）；嗅探会把 IP 替换成域名，反而破坏连接 |
 
 ### `respect-rules: true` — DNS 查询也走代理
 

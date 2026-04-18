@@ -1196,6 +1196,10 @@ function buildDerivedPatterns() {
     },
     direct: direct,
     fakeIpBypass: projectPolicyPatterns(matchFakeIpBypass),
+    // Sniffer 是 fake-ip 模式的安全网：当 fake-IP 映射丢失或 QUIC 跳过 DNS 时，
+    // 从 TLS SNI / HTTP Host 恢复域名，确保 AI 流量命中链式代理规则而非漏到 MATCH。
+    //   force → chain 域名 + 所有 sniffer:"force" 条目（Cloudflare 等）
+    //   skip  → Tailscale / Plex / Apple 推送等故意用 IP 语义的直连应用
     sniffer: {
       force: mergeStringGroups([chainAll, projectPolicyPatterns(matchSniffer("force"))]),
       skip: projectPolicyPatterns(matchSniffer("skip"))
@@ -1447,6 +1451,9 @@ function buildDnsConfig(derived) {
 }
 
 // 构建 Sniffer 配置。
+// TLS (443/8443) / HTTP (80/8080/8880) / QUIC (443) 三种协议均开启嗅探。
+// force-domain：从 SNI/Host 恢复域名，防止 AI 流量因缺域名漏到 MATCH。
+// skip-domain：保留 IP 语义，避免破坏 P2P 打洞和推送通道。
 function buildSnifferConfig(derived) {
   return {
     enable: true,
