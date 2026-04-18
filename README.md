@@ -206,7 +206,8 @@ flowchart LR
 | `az.其他调度.💬 即时通讯` | `MEDIA.im` | 域外 DoH | Telegram / Discord / LINE / WhatsApp / Signal |
 | 默认代理 | `CDN` | 域外 DoH | DoH：dns.google / cloudflare-dns.com / quad9.net<br>CDN：Cloudflare / AWS / CloudFront / Fastly / Akamai<br>Azure CDN / jsDelivr / Bunny / Cloudinary |
 | `DIRECT` | `CN` | 域内 DoH | AI：DeepSeek / Doubao / MiniMax / Baichuan / Stepfun / 通义 / Moonshot / 智谱 / SiliconFlow<br>办公：腾讯 / 钉钉 / 飞书 / WPS<br>云：阿里云 / 腾讯云 / 火山引擎 / 华为云 / 百度云 / 京东云 / 七牛 / 又拍 / 网宿 / 天翼 / 金山<br>消费：百度 / Bilibili / 微博 / 知乎 / 小红书 / 抖音 / 快手<br>网易 / 爱奇艺 / 优酷 / 芒果TV / 搜狐<br>淘宝 / 天猫 / 京东 / 拼多多 / 美团 / 大众点评 / 米哈游 |
-| `DIRECT` | `OVERSEAS` | 域外 DoH | Apple / iCloud / 出口验证（ip.sb / ifconfig.me / ipinfo.io / ping0.cc）<br>沉浸式翻译 / MinerU（域内应用，因域内 DNS 解析异常而使用域外 DoH）<br>Tailscale / ZeroTier / Plex / Synology / Typeless |
+| `DIRECT` | `OVERSEAS.apple` | 域内 + 域外并行（fallback-filter 按 geoip 仲裁） | Apple / iCloud（不绑定单侧 DoH，确保 SG 与 CN 都能正常登录 Apple Store） |
+| `DIRECT` | `OVERSEAS.other` | 域外 DoH | 出口验证（ip.sb / ifconfig.me / ipinfo.io / ping0.cc）<br>沉浸式翻译 / MinerU（域内应用，因域内 DNS 解析异常而使用域外 DoH）<br>Tailscale / ZeroTier / Plex / Synology / Typeless |
 | `DIRECT` | `LOCAL` | 域内 DoH | Apple 推送 / `.lan` / `.local` / `.localhost` / `.home.arpa` |
 | `DIRECT` | `NETWORK` | — | RFC 1918（10/8, 172.16/12, 192.168/16）<br>链路本地（169.254/16, fe80::/10）<br>CGNAT（100.64/10）/ Tailscale magic IP<br>IPv6 ULA（fc00::/7） |
 

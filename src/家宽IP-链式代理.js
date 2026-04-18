@@ -1086,9 +1086,12 @@ function buildPolicy() {
     },
 
     // ---- direct · 直连 ----
+    // Apple 不绑定 dnsZone，走 nameserver + fallback 并行查询 + fallback-filter geoip 仲裁：
+    // SG：域内 DoH 返回非 CN IP → fallback-filter 选域外结果 → 全球 CDN；
+    // CN：域内 DoH 返回 CN Apple CDN → 直接使用。两端都不依赖单侧 DoH 可用性。
     {
       key: "direct.apple", patterns: flattenGroupedPatterns(OVERSEAS.special.apple),
-      route: "direct", dnsZone: "overseas", fakeIpBypass: true
+      route: "direct", fakeIpBypass: true, fallbackFilter: true
     },
     {
       key: "direct.egressCheck", patterns: flattenGroupedPatterns(OVERSEAS.special.egressCheck),
