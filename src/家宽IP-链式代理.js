@@ -1404,12 +1404,28 @@ function buildDnsFallbackFilter() {
 }
 
 // 构建不含动态列表项的基础 DNS 配置。
+//
+// respect-rules: true — 让 DNS 查询也走分流规则，而不是全部从本地直连发出。
+// 效果：
+//   chain 域名的 DoH 查询 → 经链式代理从 SG 家宽出去 → dns.google 看到的是 SG IP
+//   direct 域名的 DoH 查询 → 走 direct-nameserver（域内 DoH）→ 本地直连
+//   media 域名的 DoH 查询 → 经媒体代理组出去
+// 为什么需要：
+//   respect-rules: false 时，所有 DoH 查询都从本地网络直连发出。
+//   在 CN 出差时这意味着：
+//     1. 域外 DoH（dns.google / cloudflare）被墙 → 查询超时
+//     2. 即使部分可达，dns.google 也会看到"CN IP 在查 claude.ai"
+//   虽然 fake-ip 模式让数据连接不依赖本地 DNS 结果（代理服务端自行解析），
+//   但 DNS 查询本身仍是从本地发出的——respect-rules: true 堵住这个口。
+// 引导依赖：
+//   proxy-server-nameserver（域内 DoH）负责解析代理服务器本身的域名，
+//   不走分流规则，打破循环依赖。
 function buildDnsBaseConfig() {
   return {
     enable: true,
     listen: "0.0.0.0:1053",
     ipv6: true,
-    "respect-rules": false,
+    "respect-rules": true,
     "enhanced-mode": "fake-ip",
     "fake-ip-range": "198.18.0.1/16",
     "default-nameserver": ["223.5.5.5", "119.29.29.29"],
