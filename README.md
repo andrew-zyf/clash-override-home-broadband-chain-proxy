@@ -183,14 +183,28 @@ flowchart LR
 | `skip-domain` | `sniffer: "skip"` | Tailscale / Plex 等直连应用 — 需保留原始 IP，嗅探会破坏 P2P 打洞 |
 | `fallback-filter` | `fallbackFilter` | 兜底：非 CN IP 走域外 DoH（`geoip-code: CN`） |
 
-三阶防泄漏时序：
+### `respect-rules: true` — DNS 查询也走代理
 
-1. **本地寻址** — `proxy-server-nameserver` 用域内 DoH 解析代理节点 IP，建立连接（不触发代理）
-2. **域外 DoH** — DoH 端点（`dns.google` 等）走代理，DNS 查询在境外加密隧道内完成
-3. **远端解析** — AI 请求使用 Fake-IP 本地握手，实际域名在海外家宽节点解析。AI 服务端只能看到家宽 IP
+脚本启用了 `respect-rules: true`，让 DNS 查询本身也遵循分流规则，而不是全部从本地网络直连发出。
+
+**为什么需要：** `respect-rules: false`（Clash 默认值）时，所有 DoH 查询都从你本地网络直连发到 `dns.google`。出差到 CN 时意味着：
+- `dns.google` / `cloudflare-dns.com` 被墙 → 查询超时，浪费数秒
+- 如果部分可达，Google DNS 日志里会留下"CN IP 查了 claude.ai"这样的痕迹
+
+启用后，chain 域名的 DoH 查询经链式代理从 SG 家宽出去；direct 域名走 `direct-nameserver`（域内 DoH）本地解析。无论你人在新加坡还是北京酒店，`dns.google` 看到的来源永远是你的 SG 家宽 IP。
+
+**三阶防泄漏时序：**
+
+```
+1. 本地寻址    proxy-server-nameserver（域内 DoH）解析代理节点 IP → 建立代理隧道（不触发分流）
+               ↓
+2. 隧道内 DNS  DoH 查询（dns.google 等）经代理隧道到 SG 家宽 → 在境外完成加密解析
+               ↓
+3. 远端连接    AI 请求 Fake-IP 本地握手 → 实际域名在 SG 家宽节点解析 → AI 服务端只看到家宽 IP
+```
 
 > [!CAUTION]
-> 必须关闭浏览器的"安全 DNS / Secure DNS"功能。该功能会绕过系统网络栈（跳过 Clash 的 Fake-IP），导致真实 IP 泄漏。
+> 必须关闭浏览器的"安全 DNS / Secure DNS"功能。该功能绕过系统网络栈（跳过 Clash 的 Fake-IP），会导致真实 IP 泄漏。
 
 ### 路由对照表
 
