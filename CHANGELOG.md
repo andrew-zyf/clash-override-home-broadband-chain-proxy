@@ -55,10 +55,11 @@
 - **SOURCE_LOCAL_DIRECT** — 新增 `home.arpa`（RFC 8375）。
 - **SOURCE_NETWORK_DIRECT** — 新增 RFC 1918（10/8、172.16/12、192.168/16）/ 链路本地（169.254/16、fe80::/10）/ IPv6 ULA（fc00::/7）。
 
-### DNS 与安全
+### DNS、Sniffer 与安全
 
 - **`respect-rules: true`** — DNS 查询遵循分流规则：chain 域名的 DoH 经链式代理从 SG 家宽出去，direct 域名走 `direct-nameserver`（域内 DoH）。出差 CN 时 `dns.google` 只看到 SG 家宽 IP，不会暴露临时 CN IP。
 - **Apple DNS 修复** — Apple POLICY 条目移除 `dnsZone: "overseas"` 硬绑定，改为 `fallbackFilter: true`，走 nameserver + fallback 并行查询 + geoip 仲裁。SG 走域外结果，CN 走域内 Apple CDN，不再因域外 DoH 被墙导致 Apple Store 无法登录。
+- **Sniffer 说明** — README 新增专节解释 Sniffer 在 fake-ip 模式下的安全网作用：当 fake-IP 映射丢失或 QUIC 跳过 DNS 时，Sniffer 从 TLS SNI / HTTP Host 恢复域名，确保 AI 流量命中链式代理规则而非漏到 MATCH 兜底。`force-domain`（chain 域名 + Cloudflare）和 `skip-domain`（Tailscale / Plex / Apple 推送等 P2P 应用）的取舍逻辑一并记录。
 
 ### 文档
 
