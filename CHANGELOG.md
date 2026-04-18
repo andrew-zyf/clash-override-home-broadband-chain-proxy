@@ -24,8 +24,8 @@
 
 ### 地区
 
-- 新增 `TW`（台湾 🇹🇼）和 `KR`（韩国 🇰🇷）地区支持。
-- 链式出口 fallback 顺序更新为 `SG → TW → JP → KR → US`。
+- 新增 `TW`（台湾 🇹🇼）地区支持。
+- 链式出口 fallback 顺序更新为 `SG → TW → JP → US`。
 - 媒体组 fallback 顺序更新为 `US → JP → HK`。
 
 ### 域名覆盖扩充
