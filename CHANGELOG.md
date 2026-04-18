@@ -1,0 +1,104 @@
+# Changelog
+
+版本号对应脚本头部的 `@version`。
+
+---
+
+## v10.0 (2026-04-17)
+
+重大架构升级：代理组重命名、POLICY/DERIVED 层简化、域名覆盖全面扩充、DNS 防泄漏加固。
+
+### 架构
+
+- **POLICY 层简化**：移除 `routeBucket` 字段；`buildNameserverPolicy` 和 `buildDirectRules` 改为直接遍历 POLICY，删除中间表 `buildNameserverPolicyTable`。
+- **DERIVED 层扁平化**：`patterns` 从 4 层嵌套树（`strict.{ai,support,...}` / `general.{media,...}` / `direct.{domestic.{ai,...},overseas.{...},...}`）压缩为 5 个平坦字段 `{ chain, media, direct, fakeIpBypass, sniffer }`；`processNames` 从 `strict.base` / `general.browser` 等别名简化为 `{ aiApps, aiCli, browser }`。
+- **死代码清理**：移除 `matchRouteBucket` / `matchSnifferOnly` / `appendRawRules` / `writeRelayIntoNodeSelection` / `writeMediaIntoNodeSelection` 等未使用的函数；移除始终为空的 `strict.validation` 和从未被消费的 `direct.overseas` 子树。
+- **`buildDnsFallbackFilterDomains`**（10 行手工拼装 7 个派生路径）→ `projectPolicyPatterns(matchFallbackFilter)`（1 行）。
+- 新增 `endsWithString(str, suffix)` ES5 安全辅助函数，替换两处 `lastIndexOf` 惯用法。
+
+### 代理组命名
+
+- 组名后缀加入 `-AI|` 标识：`-链式代理.跳板` → `-AI|链式代理.跳板`，`-链式代理.家宽出口` → `-AI|链式代理.家宽出口`。
+- 旗帜与地区名之间移除 `|` 分隔符：`🇸🇬|新加坡` → `🇸🇬新加坡`。
+- `家宽IP出口` 简化为 `家宽出口`。
+
+### 地区
+
+- 新增 `TW`（台湾 🇹🇼）和 `KR`（韩国 🇰🇷）地区支持。
+- 链式出口 fallback 顺序更新为 `SG → TW → JP → KR → US`。
+- 媒体组 fallback 顺序更新为 `US → JP → HK`。
+
+### 域名覆盖扩充
+
+#### SOURCE_CHAIN（链式代理 → 家宽出口）
+
+- **AI 服务** — 新增 Mistral / Hugging Face（`hf.co` / `hf.space`）/ Replicate（含 `replicate.delivery` CDN）/ Groq / Together / ElevenLabs / Midjourney / Runway / Stability / Ideogram / Civitai / Character.ai / Pi / You.com / Phind / Kagi；新增 Cursor 后端域名（`cursor.sh` / `cursor.com`）。
+- **支撑平台** — `developer` 拆分为 5 个子组：`git_hosts`（+ GitLab / Atlassian / Bitbucket）、`package_registries`（+ PyPI / pythonhosted / crates.io / RubyGems / Docker Hub）、`deployment`（Vercel / Netlify / Supabase / Fly.io / Render / Railway）、`tools`（JetBrains）、`docs_and_qa`（Stack Overflow / Mozilla MDN / Read the Docs / GitBook）。
+- **共享集成** — `antibot` / `payments` / `telemetry` 三桶合并为 `integrations` 单一桶；新增 `auth_providers`（Auth0 / Clerk / Okta）；`antibot` 补充 hCaptcha；`payments` 补充 PayPal / Paddle / Lemon Squeezy；`telemetry` 补充 PostHog / Segment / Mixpanel / Amplitude / Datadog RUM。
+
+#### SOURCE_MEDIA（媒体地区组）
+
+- **视频流媒体** — 新增 Disney+（`dssott.com` / `bamgrid.com`）/ HBO Max（`hbonow.com` / `maxgo.com`）/ Hulu / Prime Video（`aiv-cdn.net` / `aiv-delivery.net`）/ Twitch（`ttvnw.net` / `jtvnw.net`）/ Peacock / Paramount+ / Crunchyroll / Vimeo / Dailymotion。
+- **音乐** — 新增 Spotify（`scdn.co` / `spotifycdn.com`）/ SoundCloud / Bandcamp。
+- **社交** — `facebook` 桶重命名为 `meta`，新增 Threads；新增 Reddit / TikTok（海外版）/ Snapchat / Pinterest / Bluesky / Tumblr / Medium / Substack / Patreon / Goodreads / Letterboxd。
+- **即时通讯** — 新增 LINE（`line.me` / `line-apps.com` / `line-scdn.net` / `line-cdn.net`）/ WhatsApp / Signal。
+
+#### SOURCE_CN_DIRECT（域内直连）
+
+- **AI** — 新增 DeepSeek / Doubao（含 `volcengineapi.com`）/ MiniMax（`minimaxi.com` / `hailuoai.com`）/ Baichuan / Stepfun。
+- **消费类**（新增 `consumer` 子桶 + POLICY 条目 `direct.cn.consumer`）— Baidu / Bilibili（`hdslb.com` / `bilivideo.com` / `bilicdn1.com` 等）/ Weibo + Sina / Zhihu / 小红书 / 抖音 + 快手 / 网易 / 爱奇艺 / 优酷 / 芒果TV / 搜狐 / 淘宝 + 天猫 / 京东 / 拼多多 / 美团 + 大众点评 / 米哈游。
+
+#### 其他 SOURCE
+
+- **SOURCE_GLOBAL_DEFAULT** — 新增 Bunny CDN（`b-cdn.net`）/ Cloudinary。
+- **SOURCE_OVERSEAS_DIRECT** — 出口验证补充 `ifconfig.me` / `ip.sb`；应用补充 ZeroTier / Plex（`plex.direct`）/ Synology（`quickconnect.to`）。
+- **SOURCE_LOCAL_DIRECT** — 新增 `home.arpa`（RFC 8375）。
+- **SOURCE_NETWORK_DIRECT** — 新增 RFC 1918（10/8、172.16/12、192.168/16）/ 链路本地（169.254/16、fe80::/10）/ IPv6 ULA（fc00::/7）。
+
+### DNS 与安全
+
+- **`respect-rules: true`** — DNS 查询遵循分流规则：chain 域名的 DoH 经链式代理从 SG 家宽出去，direct 域名走 `direct-nameserver`（域内 DoH）。出差 CN 时 `dns.google` 只看到 SG 家宽 IP，不会暴露临时 CN IP。
+- **Apple DNS 修复** — Apple POLICY 条目移除 `dnsZone: "overseas"` 硬绑定，改为 `fallbackFilter: true`，走 nameserver + fallback 并行查询 + geoip 仲裁。SG 走域外结果，CN 走域内 Apple CDN，不再因域外 DoH 被墙导致 Apple Store 无法登录。
+
+### 文档
+
+- README 引言新增出差场景段落（SG → CN 酒店 Wi-Fi 开发环境瘫痪）。
+- Usage 重组为 5 步编号流程 + FAQ（含自定义地区正则、新增地区指引）+ 升级/卸载说明。
+- SOURCE 对照表按实际内容全面重写。
+- 新增 `respect-rules: true` 三阶防泄漏时序说明及 Secure DNS 警告。
+- 截图从 JPG 替换为 PNG。
+- 全局统一术语：`国内` / `国外` → `域内` / `域外`。
+
+---
+
+## v9.0 (2026-04-11)
+
+引入 POLICY 策略表架构，统一 DNS / Sniffer / 分流规则的分类来源。
+
+- **POLICY 策略表**：每条 entry 同时声明 `route` / `dnsZone` / `sniffer` / `fakeIpBypass` / `fallbackFilter`，取代此前散落在各 builder 里的分类决策。
+- **DERIVED 派生视图**：从 POLICY 自动投影 `patterns` / `processNames` / `networkRules`，供下游 `build*` / `write*` 函数统一消费。
+- **媒体独立选区**：`SOURCE_MEDIA`（YouTube / Netflix / X / Telegram / Discord）从链式出口分离，路由到独立的 `mediaRegion` 地区组。
+- **EXPECTED_ROUTES 路由样本**：加载期 `assertExpectedRoutesCoverage` + 运行期 `validateManagedRouting` + `tests/validate.js` 三方共用。
+- **README** 以叙事框架重写，新增 Architecture 流程图与 SOURCE 对照表。
+
+---
+
+## v8.3 (2026-03-20)
+
+- 新增可选 AI CLI 进程路由（`claude` / `gemini` / `codex`）。
+- Google / Microsoft 全系域名入链。
+- 域名分类细化：chain / direct / sniffer 三层同源。
+- 域名验证与重跑幂等加固。
+
+---
+
+## v8.0 (2026-03-12 – 2026-03-14)
+
+首个公开版本。
+
+- MiyaIP 家宽 IP 链式代理节点注入（家宽出口 + 官方中转）。
+- AI 域名（Claude / ChatGPT / Gemini / Perplexity）按域名路由到 `chainRegion` 出口。
+- DNS：域外 DoH（Google / Cloudflare）+ 域内 DoH（AliDNS / DNSPod）+ fake-ip 白名单。
+- Sniffer：force-domain / skip-domain 按业务分类。
+- Tailscale CGNAT / IPv6 ULA 直连。
+- 基础测试框架（`tests/validate.js`，`vm` 隔离）。
