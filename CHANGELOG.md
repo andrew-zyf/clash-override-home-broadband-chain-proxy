@@ -68,5 +68,3 @@
 - SOURCE 对照表按实际内容全面重写。
 - 新增 Sniffer 专节（Fake-IP 安全网原理 + force/skip 取舍）。
 - 新增 `respect-rules: true` 三阶防泄漏时序说明及 Secure DNS 警告。
-- 截图从 JPG 替换为 PNG。
-- 全局统一术语：`国内` / `国外` → `域内` / `域外`。
