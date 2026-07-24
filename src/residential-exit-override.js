@@ -4,7 +4,7 @@
 // 请在下面的 RESIDENTIAL_CREDENTIALS 和 USER_OPTIONS 中填写你的配置。
 // 兼容性：Clash Verge / Clash Party 的 JavaScriptCore；只用 ES5 语法。
 //
-// @version 14.8
+// @version 14.12
 
 // ===========================================================================
 // 用户配置
@@ -491,10 +491,11 @@ var DNS_SNIFFER_MODULE = (function () {
       core: ["+.dns.google", "+.cloudflare-dns.com", "+.quad9.net"],
     },
     cloud: {
-      cloudflare: ["+.cdn.cloudflare.net", "+.workers.dev", "+.pages.dev"],
+      // 仅基础设施后缀。消费站 / 租户平台（amazon.com、pages.dev、workers.dev）
+      // 不进支撑面板，避免开箱把购物与任意 CF Pages 绑进家宽。
+      cloudflare: ["+.cdn.cloudflare.net"],
       aws: [
         "+.amazonaws.com",
-        "+.amazon.com",
         "+.awsstatic.com",
         "+.cloudfront.net",
       ],
@@ -573,7 +574,7 @@ var DNS_SNIFFER_MODULE = (function () {
       hulu: ["+.hulu.com", "+.hulustream.com", "+.huluim.com"],
       prime_video: [
         "+.primevideo.com",
-        "+.aiv-cdn.net", // Prime Video CDN（不会牵连 amazon.com 主站 and AWS）
+        "+.aiv-cdn.net", // Prime Video CDN（与 amazon.com 主站解耦；主站也不再进 CDN.cloud）
         "+.aiv-delivery.net",
       ],
       twitch: ["+.twitch.tv", "+.ttvnw.net", "+.jtvnw.net"],
@@ -1902,6 +1903,8 @@ function writeResidentialGroup(config) {
 
 // UI 面板代理组名常量。
 var UI_GROUPS = {
+  // 严管三组共用的实际出口选择器；改这一处即可统一 AI/支撑/集成出口 IP。
+  strictExit: "az.严管调度.🎯 统一出口",
   ai: "az.严管调度.🤖 AI 高敏阵列",
   support: "az.严管调度.🛠️ 支撑平台",
   integrations: "az.严管调度.🛡️ 生态域集成",
@@ -1911,28 +1914,32 @@ var UI_GROUPS = {
   im: "az.其他调度.💬 即时通讯",
 };
 
-// 写入 UI 面板策略组。调度顺序：US → JP → SG → HK → 家宽出口。
+// 写入 UI 面板策略组。
+// 严管：统一出口父组（默认家宽）+ 三分类面板只挂该父组，防止手动改一格导致 IP 分裂。
+// 媒体：仍美区优先，各组独立可选。
 function writeExpandedProxyGroups(config, residentialTarget, regionalTargets) {
   var proxyGroups = config["proxy-groups"];
-
-  var dispatchChoices = [];
-  if (regionalTargets.US) dispatchChoices.push(regionalTargets.US);
+  var regionOrder = [];
+  if (regionalTargets.US) regionOrder.push(regionalTargets.US);
   var remainingRegions = ["JP", "SG", "HK"];
   for (var j = 0; j < remainingRegions.length; j++) {
     var target = regionalTargets[remainingRegions[j]];
-    if (target) dispatchChoices.push(target);
+    if (target) regionOrder.push(target);
   }
-  dispatchChoices.push(residentialTarget);
-  dispatchChoices = uniqueStrings(dispatchChoices);
+
+  var strictChoices = uniqueStrings([residentialTarget].concat(regionOrder));
+  var mediaChoices = uniqueStrings(regionOrder.concat([residentialTarget]));
+  var strictOnly = [UI_GROUPS.strictExit];
 
   var subgroups = [
-    { name: UI_GROUPS.ai, type: "select", proxies: dispatchChoices },
-    { name: UI_GROUPS.support, type: "select", proxies: dispatchChoices },
-    { name: UI_GROUPS.integrations, type: "select", proxies: dispatchChoices },
-    { name: UI_GROUPS.video, type: "select", proxies: dispatchChoices },
-    { name: UI_GROUPS.music, type: "select", proxies: dispatchChoices },
-    { name: UI_GROUPS.social, type: "select", proxies: dispatchChoices },
-    { name: UI_GROUPS.im, type: "select", proxies: dispatchChoices },
+    { name: UI_GROUPS.strictExit, type: "select", proxies: strictChoices },
+    { name: UI_GROUPS.ai, type: "select", proxies: strictOnly },
+    { name: UI_GROUPS.support, type: "select", proxies: strictOnly },
+    { name: UI_GROUPS.integrations, type: "select", proxies: strictOnly },
+    { name: UI_GROUPS.video, type: "select", proxies: mediaChoices },
+    { name: UI_GROUPS.music, type: "select", proxies: mediaChoices },
+    { name: UI_GROUPS.social, type: "select", proxies: mediaChoices },
+    { name: UI_GROUPS.im, type: "select", proxies: mediaChoices },
   ];
   for (var i = 0; i < subgroups.length; i++) {
     upsertNamedItem(proxyGroups, subgroups[i]);
@@ -2071,7 +2078,9 @@ function buildQuicRejectRules() {
   return ["AND,((NETWORK,udp),(DST-PORT,443)),REJECT"];
 }
 
-// 拼接所有管理规则。顺序即优先级：QUIC 拦截 → 显式域名 → 媒体 → DoH → 直连 → CN → GFW → 进程 → MATCH。
+// 拼接所有管理规则。顺序即优先级：
+// QUIC 拦截 → 显式域名 → 媒体 → DoH → 直连 → CN → 进程 → GFW → MATCH。
+// 进程在 GFW 之前：AI/浏览器访问未维护但被 gfw 收录的域时，仍走严管面板，避免漏到机房默认组。
 function buildManagedRules(derived, routingTargets) {
   var concatenated = buildQuicRejectRules()
     .concat(buildResidentialDomainRules(derived))
@@ -2079,9 +2088,9 @@ function buildManagedRules(derived, routingTargets) {
     .concat(buildProxyRules(derived, routingTargets.defaultProxyTarget))
     .concat(buildDirectRules(derived))
     .concat(buildChinaFallbackRules())
-    .concat(buildGfwProxyRule(routingTargets.defaultProxyTarget))
     .concat(buildStrictProcessRules(derived))
-    .concat(buildBrowserResidentialRules(derived));
+    .concat(buildBrowserResidentialRules(derived))
+    .concat(buildGfwProxyRule(routingTargets.defaultProxyTarget));
   return dedupeRulesByIdentity(concatenated);
 }
 
@@ -2155,7 +2164,8 @@ function buildResidentialDomainRules(derived) {
   return ruleLines;
 }
 
-// 生成 AI App / CLI 进程兜底规则。放在域名规则和 CN 兜底之后，避免压过明确域名。
+// 生成 AI App / CLI 进程兜底规则。放在 CN 之后、GFW 之前：
+// 明确域名与国内直连仍优先；未维护的 gfw 域由进程接管进严管面板。
 function buildStrictProcessRules(derived) {
   var ruleLines = [];
   appendProcessRuleGroups(
@@ -2281,6 +2291,38 @@ function assertResidentialGroupShape(config, residentialGroupName) {
   }
 }
 
+// 严管三分类面板必须只挂统一出口，防止各自选择导致 IP 分裂。
+function assertStrictExitCoupling(config) {
+  var strictExit = findProxyGroupByName(
+    config["proxy-groups"],
+    UI_GROUPS.strictExit,
+  );
+  if (!strictExit || strictExit.type !== "select") {
+    throw createUserError("缺少严管统一出口组: " + UI_GROUPS.strictExit);
+  }
+  if (
+    !strictExit.proxies ||
+    strictExit.proxies.length === 0 ||
+    strictExit.proxies[0] !== BASE.residentialGroupName
+  ) {
+    throw createUserError("严管统一出口默认首选必须是家宽出口");
+  }
+
+  var categoryNames = [UI_GROUPS.ai, UI_GROUPS.support, UI_GROUPS.integrations];
+  for (var i = 0; i < categoryNames.length; i++) {
+    var group = findProxyGroupByName(config["proxy-groups"], categoryNames[i]);
+    if (
+      !group ||
+      group.type !== "select" ||
+      !haveSameStringSet(group.proxies || [], [UI_GROUPS.strictExit])
+    ) {
+      throw createUserError(
+        "严管分类面板必须只挂统一出口: " + categoryNames[i],
+      );
+    }
+  }
+}
+
 // 判断两个字符串数组集合相等（无视顺序、不允许重复）。
 function haveSameStringSet(values, expectedValues) {
   if (values.length !== expectedValues.length) return false;
@@ -2313,6 +2355,7 @@ function validateManagedRouting(config, routingTargets, derived) {
   assertRoutingTargetsExist(config, routingTargets);
   assertTransitBindings(config);
   assertResidentialGroupShape(config, routingTargets.residentialGroupName);
+  assertStrictExitCoupling(config);
 
   var ruleLineLookup = buildStringLookup(config.rules);
   var validationTargets = buildRoutingValidationTargets(derived);

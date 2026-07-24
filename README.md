@@ -2,7 +2,7 @@
 
 Clash 覆写脚本。通过 `家宽出口（官方中转）` 提供固定家宽出口，把 AI、开发平台、支付验证、遥测等高敏流量集中到可手动切换的调度面板里，降低出口 IP 不一致带来的风控风险。
 
-**当前版本：** v14.8
+**当前版本：** v14.12
 
 ## 快速开始
 
@@ -38,7 +38,7 @@ var RESIDENTIAL_CREDENTIALS = {
 脚本接收订阅 config，全部接管：
 
 - **代理组** — 清除订阅附带的分组，只保留 `az.*` 管理组和默认代理组。家宽出口和分区测速组注入默认组候选列表。
-- **规则** — 丢弃订阅全部规则，由 POLICY 投影生成。顺序：QUIC 拦截（可选，UDP:443 全局 REJECT）→ AI/支撑/集成域名（`DOMAIN-SUFFIX`）→ 媒体域名 → DoH → 直连 → CN → GFW → 进程 → MATCH。
+- **规则** — 丢弃订阅全部规则，由 POLICY 投影生成。顺序：QUIC 拦截（可选，UDP:443 全局 REJECT）→ AI/支撑/集成域名（`DOMAIN-SUFFIX`）→ 媒体域名 → DoH → 直连 → CN → 进程 → GFW → MATCH。
 - **DNS** — Fake-IP 模式、`respect-rules: true`，默认监听 `127.0.0.1:1053`。高敏域名通过 `nameserver-policy` 显式绑定域外 DoH，`sniffer.force-domain` 兜底恢复域名。
 - **节点** — 全部保留不动。
 - **默认代理组** — 先精确匹配 `PROXY`/`GLOBAL`，再按关键词（`PROXY`、`节点选择`、`手动选择`、`GLOBAL`）子串匹配，失败时从 MATCH 规则提取。MATCH / DoH / GFW 统一指向它。
@@ -52,19 +52,22 @@ var RESIDENTIAL_CREDENTIALS = {
 | `az.分区测速.🇸🇬 新加坡节点组` | url-test | 订阅中的新加坡节点 |
 | `az.分区测速.🇭🇰 香港节点组` | url-test | 订阅中的香港节点 |
 | `az.核心出口.🏠 家宽出口` | select | 只含官方中转节点 |
-| `az.严管调度.🤖 AI 高敏阵列` | select | AI 域名 / App / CLI / 浏览器 |
-| `az.严管调度.🛠️ 支撑平台` | select | Google / Microsoft / GitHub / 开发平台 / CDN |
-| `az.严管调度.🛡️ 生态域集成` | select | 反机器人 / 鉴权 / 支付 / 遥测 |
+| `az.严管调度.🎯 统一出口` | select | 严管实际出口选择（改这一处即可） |
+| `az.严管调度.🤖 AI 高敏阵列` | select | AI 域名 / App / CLI / 浏览器 → 只挂统一出口 |
+| `az.严管调度.🛠️ 支撑平台` | select | Google / Microsoft / GitHub / 开发 / CDN → 只挂统一出口 |
+| `az.严管调度.🛡️ 生态域集成` | select | 反机器人 / 鉴权 / 支付 / 遥测 → 只挂统一出口 |
 | `az.其他调度.🎬 视频流媒体` | select | YouTube / Netflix / Disney+ / Hulu / Twitch 等 |
 | `az.其他调度.🎵 音乐播客` | select | Spotify / SoundCloud / Bandcamp |
 | `az.其他调度.🌐 社交长文` | select | X / Facebook / Instagram / Reddit / LinkedIn 等 |
 | `az.其他调度.💬 即时通讯` | select | Telegram / Discord / LINE / WhatsApp / Slack / Zoom 等 |
 
-所有调度组候选顺序统一：
+调度组候选顺序：
 
-```
-🇺🇸 美国 → 🇯🇵 日本 → 🇸🇬 新加坡 → 🇭🇰 香港 → 🏠 家宽出口
-```
+| 面板类型 | 默认首选 | 候选顺序 |
+|---|---|---|
+| `🎯 统一出口`（严管共用） | 🏠 家宽出口 | 家宽 → 🇺🇸 → 🇯🇵 → 🇸🇬 → 🇭🇰 |
+| AI / 支撑 / 集成 | （固定）统一出口 | 仅 `🎯 统一出口`，不可各自另选 |
+| 其他（视频 / 音乐 / 社交 / IM） | 🇺🇸 美国（若有） | 🇺🇸 → 🇯🇵 → 🇸🇬 → 🇭🇰 → 家宽 |
 
 不存在的地区不会出现。
 
@@ -73,7 +76,7 @@ var RESIDENTIAL_CREDENTIALS = {
 | 源桶 | 出口面板 |
 |---|---|
 | `RESIDENTIAL_EXIT.ai` | `az.严管调度.🤖 AI 高敏阵列` |
-| `RESIDENTIAL_EXIT.support` + `CDN.cloud` | `az.严管调度.🛠️ 支撑平台` |
+| `RESIDENTIAL_EXIT.support` + `CDN.cloud`（仅基础设施后缀） | `az.严管调度.🛠️ 支撑平台` |
 | `RESIDENTIAL_EXIT.integrations` + Cloudflare | `az.严管调度.🛡️ 生态域集成` |
 | `MEDIA.video` | `az.其他调度.🎬 视频流媒体` |
 | `MEDIA.music` | `az.其他调度.🎵 音乐播客` |
@@ -86,8 +89,10 @@ var RESIDENTIAL_CREDENTIALS = {
 
 以下是有意的设计取舍，了解可避免意外：
 
-- **进程规则在 CN / GFW 之后**：AI / 浏览器进程规则只作兜底，仅当流量未被任何域名规则、`GEOSITE,cn`、`GEOSITE,gfw` 命中时才生效。AI 核心域名由前置 `DOMAIN-SUFFIX` 规则锁定到家宽出口面板，不受影响；但 AI 进程访问的、被 `gfw` 收录且未显式维护的域名会先走默认代理组。
+- **严管出口耦合**：AI / 支撑 / 集成三组只挂 `🎯 统一出口`；改统一出口即可保证三类流量同 IP，无法在分类面板上各自另选导致分裂。
+- **进程规则在 CN 之后、GFW 之前**：明确域名与国内直连仍优先；AI / 浏览器进程访问的、被 `gfw` 收录但未显式维护的域名会进严管面板（默认家宽），不再先被 `GEOSITE,gfw` 拆到机房默认组。Chrome 等未列入的浏览器不受进程规则影响。
 - **默认代理组识别**：先精确匹配 `PROXY`/`GLOBAL`，再关键词子串，最后 MATCH 兜底。若订阅仅有含关键词的非默认组名（无精确名），仍可能被子串选中。
+- **CDN.cloud 不含消费站**：`amazon.com` / `pages.dev` / `workers.dev` 不进支撑面板，落到 GFW/MATCH；`amazonaws.com` / `cloudfront.net` / `cdn.cloudflare.net` 等基础设施仍走支撑。
 - **不再生成 `DOMAIN-KEYWORD`**：一级标签子串曾导致误路由（如 `you` 吸走 YouTube）；现仅维护显式 `DOMAIN-SUFFIX`，边缘子域靠 sniffer `force-domain` 兜底。
 
 ## DNS 与 Sniffer

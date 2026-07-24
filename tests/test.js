@@ -90,17 +90,30 @@ function expectedGroupNames(sandbox) {
   };
 }
 
-// 所有调度统一顺序：US → JP → SG → HK → 家宽出口
-function expectedDispatchChoices(output, sandbox) {
+// 媒体调度：US → JP → SG → HK → 家宽出口
+function expectedMediaDispatchChoices(output, sandbox) {
   const suffix = sandbox.BASE.groupNameSuffixes;
-  const usGroupName = regionGroupName(sandbox, "US", suffix.base);
   const choices = [];
+  const usGroupName = regionGroupName(sandbox, "US", suffix.base);
   if (findGroup(output, usGroupName)) choices.push(usGroupName);
   for (const code of ["JP", "SG", "HK"]) {
     const groupName = regionGroupName(sandbox, code, suffix.base);
     if (findGroup(output, groupName)) choices.push(groupName);
   }
   choices.push(sandbox.BASE.residentialGroupName);
+  return choices;
+}
+
+// 严管调度：家宽出口 → US → JP → SG → HK
+function expectedStrictDispatchChoices(output, sandbox) {
+  const suffix = sandbox.BASE.groupNameSuffixes;
+  const choices = [sandbox.BASE.residentialGroupName];
+  const usGroupName = regionGroupName(sandbox, "US", suffix.base);
+  if (findGroup(output, usGroupName)) choices.push(usGroupName);
+  for (const code of ["JP", "SG", "HK"]) {
+    const groupName = regionGroupName(sandbox, code, suffix.base);
+    if (findGroup(output, groupName)) choices.push(groupName);
+  }
   return choices;
 }
 
@@ -277,7 +290,7 @@ function testNormalizeOverrideMode() {
 
 // ---- script version marker ----
 function testVersionSingleDefinition() {
-  assert(overrideCode.includes("// @version 14.8"), "Expected @version 14.8");
+  assert(overrideCode.includes("// @version 14.12"), "Expected @version 14.12");
   const versionLines = overrideCode.split('\n').filter((l) =>
     l.includes("@version ")
   );
@@ -487,17 +500,35 @@ function assertManagedProxyTopology(output, sandbox) {
 }
 
 function assertManualDispatchGroups(output, sandbox) {
-  const expectedChoices = expectedDispatchChoices(output, sandbox);
-  const usGroupName = regionGroupName(sandbox, "US", sandbox.BASE.groupNameSuffixes.base);
-  const expectedFirst = findGroup(output, usGroupName) ? usGroupName : sandbox.BASE.residentialGroupName;
+  const strictChoices = expectedStrictDispatchChoices(output, sandbox);
+  const mediaChoices = expectedMediaDispatchChoices(output, sandbox);
+  const strictExit = sandbox.UI_GROUPS.strictExit;
 
-  const allGroups = strictUiGroupNames(sandbox).concat(otherUiGroupNames(sandbox));
-  for (const groupName of allGroups) {
+  const unified = findGroup(output, strictExit);
+  assert(unified, "strict unified exit missing");
+  assert.strictEqual(unified.type, "select");
+  assert.deepEqual(unified.proxies, strictChoices, "unified exit choices mismatch");
+  assert.strictEqual(
+    unified.proxies[0],
+    sandbox.BASE.residentialGroupName,
+    "unified exit should prefer residential"
+  );
+
+  for (const groupName of strictUiGroupNames(sandbox)) {
     const group = findGroup(output, groupName);
     assert(group, "UI group missing: " + groupName);
     assert.strictEqual(group.type, "select");
-    assert.deepEqual(group.proxies, expectedChoices, "dispatch choices mismatch: " + groupName);
-    assert.strictEqual(group.proxies[0], expectedFirst, "dispatch should prefer US region first: " + groupName);
+    assert.deepEqual(group.proxies, [strictExit], "strict category must only pin unified exit: " + groupName);
+  }
+
+  const usGroupName = regionGroupName(sandbox, "US", sandbox.BASE.groupNameSuffixes.base);
+  const mediaFirst = findGroup(output, usGroupName) ? usGroupName : sandbox.BASE.residentialGroupName;
+  for (const groupName of otherUiGroupNames(sandbox)) {
+    const group = findGroup(output, groupName);
+    assert(group, "UI group missing: " + groupName);
+    assert.strictEqual(group.type, "select");
+    assert.deepEqual(group.proxies, mediaChoices, "media dispatch mismatch: " + groupName);
+    assert.strictEqual(group.proxies[0], mediaFirst, "media dispatch should prefer US first: " + groupName);
   }
 }
 
@@ -544,6 +575,20 @@ function assertMediaRouting(output, sandbox) {
   ]);
 }
 
+// CDN.cloud 只收基础设施后缀；消费站 / 租户平台不得进支撑面板。
+function assertCdnCloudDoesNotAbsorbConsumerSites(output, sandbox) {
+  assertRulesMissing(output.rules, [
+    "DOMAIN-SUFFIX,amazon.com," + sandbox.UI_GROUPS.support,
+    "DOMAIN-SUFFIX,pages.dev," + sandbox.UI_GROUPS.support,
+    "DOMAIN-SUFFIX,workers.dev," + sandbox.UI_GROUPS.support
+  ]);
+  assertRulesExist(output.rules, [
+    "DOMAIN-SUFFIX,amazonaws.com," + sandbox.UI_GROUPS.support,
+    "DOMAIN-SUFFIX,cloudfront.net," + sandbox.UI_GROUPS.support,
+    "DOMAIN-SUFFIX,cdn.cloudflare.net," + sandbox.UI_GROUPS.support
+  ]);
+}
+
 function assertBrowserRouting(output, sandbox, state) {
   assertProcessRules(output, true, derivedBrowserProcessNames(state), sandbox.UI_GROUPS.ai);
   assertProcessRules(output, false, ["Google Chrome", "Arc", "Microsoft Edge", "Safari"], sandbox.UI_GROUPS.ai);
@@ -573,6 +618,10 @@ function assertBrowserRoutingPriority(output, sandbox) {
   assertRuleAppearsBefore(output.rules, "DOMAIN-SUFFIX,youtube.com," + sandbox.UI_GROUPS.video, browserRule);
   assertRuleAppearsBefore(output.rules, "DOMAIN-SUFFIX,tailscale.com,DIRECT", browserRule);
   assertRuleAppearsBefore(output.rules, "DOMAIN-SUFFIX,docs.qq.com,DIRECT", browserRule);
+  // 进程在 GFW 之前：未维护 gfw 域由 AI/浏览器进程接管，不漏到机房默认组
+  assertRuleAppearsBefore(output.rules, aiAppRule, gfwRule);
+  assertRuleAppearsBefore(output.rules, browserRule, gfwRule);
+  assertRuleAppearsBefore(output.rules, gfwRule, matchRule);
   assertRuleAppearsBefore(output.rules, geositeCnRule, matchRule);
   assertRuleAppearsBefore(output.rules, geoipCnRule, matchRule);
 
@@ -698,6 +747,7 @@ function testDefaultConfig() {
   assertManagedProxyTopology(output, sandbox);
   assertCoreStrictRouting(output, sandbox);
   assertMediaRouting(output, sandbox);
+  assertCdnCloudDoesNotAbsorbConsumerSites(output, sandbox);
   assertBrowserRouting(output, sandbox, state);
   assertBrowserRoutingPriority(output, sandbox);
   assertDomesticDirectCoverage(output, dnsBase);
@@ -1065,7 +1115,7 @@ function testGfwRuleExists() {
   var gfwRule = "GEOSITE,gfw,PROXY";
   assertRulesExist(output.rules, [gfwRule]);
   assertRuleAppearsBefore(output.rules, "GEOIP,CN,DIRECT", gfwRule);
-  assertRuleAppearsBefore(output.rules, gfwRule, "PROCESS-NAME,Claude," + sandbox.UI_GROUPS.ai);
+  assertRuleAppearsBefore(output.rules, "PROCESS-NAME,Claude," + sandbox.UI_GROUPS.ai, gfwRule);
 }
 
 // 订阅 rule-providers 应被清除，防止 RULE-SET 规则逃逸。
