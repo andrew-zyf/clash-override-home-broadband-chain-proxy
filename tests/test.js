@@ -14,7 +14,7 @@ const overrideCode = fs.readFileSync(overridePath, "utf8");
 const TEST_RESIDENTIAL_CREDENTIALS = {
   username: "user",
   password: "pass",
-  transit: { server: "transit.example.com", port: 8001 }
+  transit: { server: "residential-transit.test", port: 8001 }
 };
 
 // ---------------------------------------------------------------------------
@@ -277,7 +277,7 @@ function testNormalizeOverrideMode() {
 
 // ---- script version marker ----
 function testVersionSingleDefinition() {
-  assert(overrideCode.includes("// @version 14.7"), "Expected @version 14.7");
+  assert(overrideCode.includes("// @version 14.8"), "Expected @version 14.8");
   const versionLines = overrideCode.split('\n').filter((l) =>
     l.includes("@version ")
   );
@@ -359,7 +359,7 @@ function testDnsConfigContainsFakeIpBypass() {
   console.log("  PASS DNS config fake-ip-filter");
 }
 
-// ---- hasConfiguredResidentialCredentials port validation ----
+// ---- hasConfiguredResidentialCredentials port + placeholder validation ----
 function testHasConfiguredResidentialCredentialsPort() {
   const fn = S.hasConfiguredResidentialCredentials;
   assert.strictEqual(fn({
@@ -386,6 +386,24 @@ function testHasConfiguredResidentialCredentialsPort() {
     username: "u", password: "p",
     transit: { server: "5.6.7.8", port: null }
   }), false);
+  assert.strictEqual(fn({
+    username: "", password: "",
+    transit: { server: "", port: 8001 }
+  }), false, "empty defaults must fail");
+  assert.strictEqual(fn({
+    username: "你的用户名", password: "你的密码",
+    transit: { server: "transit.example.com", port: 8001 }
+  }), false, "doc placeholders must fail");
+  assert.strictEqual(fn({
+    username: "ChangeMe", password: "p",
+    transit: { server: "5.6.7.8", port: 8001 }
+  }), false, "changeme username must fail");
+  assert.strictEqual(fn({
+    username: "u", password: "p",
+    transit: { server: "Example.COM", port: 8001 }
+  }), false, "example.com server must fail");
+  assert.strictEqual(fn(S.RESIDENTIAL_CREDENTIALS), false,
+    "script default RESIDENTIAL_CREDENTIALS must fail");
   console.log("  PASS hasConfiguredResidentialCredentials port validation");
 }
 
@@ -479,7 +497,7 @@ function assertManualDispatchGroups(output, sandbox) {
     assert(group, "UI group missing: " + groupName);
     assert.strictEqual(group.type, "select");
     assert.deepEqual(group.proxies, expectedChoices, "dispatch choices mismatch: " + groupName);
-    assert.strictEqual(group.proxies[0], expectedFirst, "dispatch should prefer residential exit: " + groupName);
+    assert.strictEqual(group.proxies[0], expectedFirst, "dispatch should prefer US region first: " + groupName);
   }
 }
 
@@ -560,8 +578,15 @@ function assertBrowserRoutingPriority(output, sandbox) {
 
   assertRulesMissing(output.rules, [
     "DOMAIN-KEYWORD,stun," + sandbox.UI_GROUPS.ai,
-    "DOMAIN-KEYWORD,turn," + sandbox.UI_GROUPS.ai
+    "DOMAIN-KEYWORD,turn," + sandbox.UI_GROUPS.ai,
+    "DOMAIN-KEYWORD,you," + sandbox.UI_GROUPS.ai,
+    "DOMAIN-KEYWORD,cloud," + sandbox.UI_GROUPS.support
   ]);
+  assert.strictEqual(
+    output.rules.filter(function (r) { return r.indexOf("DOMAIN-KEYWORD,") === 0; }).length,
+    0,
+    "managed rules must not emit DOMAIN-KEYWORD"
+  );
 }
 
 function assertDomesticDirectCoverage(output, dnsBase) {
@@ -613,6 +638,7 @@ function assertOverseasDohDirectCoverage(output, dnsBase) {
 }
 
 function assertDnsAndSniffer(output, dnsBase) {
+  assert.strictEqual(output.dns.listen, "127.0.0.1:1053", "dns.listen should default to loopback");
   assertNameserverPolicyValues(output, [dnsBase.domesticGeosite], dnsBase.domestic);
   assertNameserverPolicyValues(output, [dnsBase.overseasGeosite], dnsBase.overseas);
   assert.strictEqual(output.dns["nameserver-policy"]["geosite:openai"], undefined);
@@ -664,6 +690,11 @@ function assertDnsAndSniffer(output, dnsBase) {
 function testDefaultConfig() {
   const { sandbox, state, dnsBase, output } = runMain();
   assert.strictEqual(output._residential, undefined);
+  assert.strictEqual(
+    output.rules[0],
+    "AND,((NETWORK,udp),(DST-PORT,443)),REJECT",
+    "default should reject QUIC first"
+  );
   assertManagedProxyTopology(output, sandbox);
   assertCoreStrictRouting(output, sandbox);
   assertMediaRouting(output, sandbox);
@@ -953,9 +984,9 @@ function testSubscriptionNonMatchRulesAreCleared() {
   assertRulesMissing(output.rules, ["MATCH,办公娱乐好帮手"]);
   // 管理 MATCH 指向默认代理组（PROXY 由关键词命中）
   assertRulesExist(output.rules, ["MATCH,PROXY"]);
-  // 管理规则正常写入
+  // 管理规则正常写入 DOMAIN-SUFFIX；不再自动生成 DOMAIN-KEYWORD
   assertRulesExist(output.rules, ["DOMAIN-SUFFIX,openai.com," + sandbox.UI_GROUPS.ai]);
-  assertRulesExist(output.rules, ["DOMAIN-KEYWORD,openai," + sandbox.UI_GROUPS.ai]);
+  assertRulesMissing(output.rules, ["DOMAIN-KEYWORD,openai," + sandbox.UI_GROUPS.ai]);
 }
 
 // 订阅附加代理组应被清除，默认组保留。
@@ -967,15 +998,64 @@ function testSubscriptionProxyGroupsAreCleaned() {
       { name: "Bahamut", type: "select", proxies: ["PROXY"] }
     );
   });
+  assert(findGroup(output, "PROXY"), "default PROXY should survive");
+  assert.strictEqual(findGroup(output, "自动选择"), undefined, "subscription url-test group should be cleared");
+  assert.strictEqual(findGroup(output, "故障转移"), undefined, "subscription fallback group should be cleared");
+  assert.strictEqual(findGroup(output, "Bahamut"), undefined, "subscription select group should be cleared");
+  assert(findGroup(output, sandbox.BASE.residentialGroupName), "managed residential group present");
+}
 
-  // 订阅附加组被清除
-  assert.strictEqual(findGroup(output, "自动选择"), undefined);
-  assert.strictEqual(findGroup(output, "故障转移"), undefined);
-  assert.strictEqual(findGroup(output, "Bahamut"), undefined);
-  // 默认代理组保留
-  assert(findGroup(output, "PROXY"), "default proxy group should survive");
-  // 管理组正常存在
-  assert(findGroup(output, sandbox.BASE.residentialGroupName), "managed residential group missing");
+// 占位凭证在 merged 下必须抛错，不能静默注入假中转。
+function testPlaceholderCredentialsAreRejected() {
+  assert.throws(() => runMain(null, (sb) => {
+    sb.RESIDENTIAL_CREDENTIALS = {
+      username: "你的用户名",
+      password: "你的密码",
+      transit: { server: "transit.example.com", port: 8001 }
+    };
+  }), /RESIDENTIAL_CREDENTIALS/);
+}
+
+// rejectQuic: false 时不注入全局 UDP:443 REJECT。
+function testRejectQuicCanBeDisabled() {
+  const { output } = runMain(null, (sb) => {
+    sb.USER_OPTIONS.rejectQuic = false;
+  });
+  assertRulesMissing(output.rules, ["AND,((NETWORK,udp),(DST-PORT,443)),REJECT"]);
+  assert(output.rules[0].indexOf("DOMAIN-SUFFIX,") === 0 || output.rules[0].indexOf("DOMAIN-") === 0,
+    "first rule should not be QUIC reject when disabled");
+}
+
+// dnsListen 可覆盖默认环回。
+function testDnsListenCanBeOverridden() {
+  const { output } = runMain(null, (sb) => {
+    sb.USER_OPTIONS.dnsListen = "0.0.0.0:1053";
+  });
+  assert.strictEqual(output.dns.listen, "0.0.0.0:1053");
+}
+
+// 精确名 PROXY 优先于含 PROXY 子串的组。
+function testDefaultProxyPrefersExactName() {
+  const { output } = runMain((config) => {
+    config["proxy-groups"] = [
+      { name: "办公PROXY", type: "select", proxies: ["🇸🇬 SG Auto 01"] },
+      { name: "PROXY", type: "select", proxies: ["🇺🇸 US Auto 01"] }
+    ];
+    config.rules = ["MATCH,PROXY"];
+  });
+  assertRulesExist(output.rules, ["MATCH,PROXY"]);
+  assertRulesMissing(output.rules, ["MATCH,办公PROXY"]);
+  assertRulesExist(output.rules, ["GEOSITE,gfw,PROXY"]);
+}
+
+// youtube 走视频面板；无 you keyword 误吸到 AI。
+function testYoutubeNotAbsorbedByAiKeyword() {
+  const { sandbox, output } = runMain();
+  assertRulesExist(output.rules, ["DOMAIN-SUFFIX,youtube.com," + sandbox.UI_GROUPS.video]);
+  assertRulesMissing(output.rules, [
+    "DOMAIN-SUFFIX,youtube.com," + sandbox.UI_GROUPS.ai,
+    "DOMAIN-KEYWORD,you," + sandbox.UI_GROUPS.ai
+  ]);
 }
 
 // GEOSITE,gfw 规则应存在并将 GFW 域路由到默认代理组。
@@ -1047,6 +1127,11 @@ const integrationTests = [
   testGfwRuleExists,
   testRuleProvidersAreCleared,
   testSubscriptionProxyGroupsAreCleaned,
+  testPlaceholderCredentialsAreRejected,
+  testRejectQuicCanBeDisabled,
+  testDnsListenCanBeOverridden,
+  testDefaultProxyPrefersExactName,
+  testYoutubeNotAbsorbedByAiKeyword,
 ];
 
 console.log("Unit tests (" + unitTests.length + "):");

@@ -2,7 +2,7 @@
 
 Clash 覆写脚本。通过 `家宽出口（官方中转）` 提供固定家宽出口，把 AI、开发平台、支付验证、遥测等高敏流量集中到可手动切换的调度面板里，降低出口 IP 不一致带来的风控风险。
 
-**当前版本：** v14.7
+**当前版本：** v14.8
 
 ## 快速开始
 
@@ -13,7 +13,9 @@ Clash 覆写脚本。通过 `家宽出口（官方中转）` 提供固定家宽�
 ```javascript
 var USER_OPTIONS = {
   enabled: true,                              // false = 完全旁路
-  overrideMode: "merged"                      // "merged" | "dns-sniffer-only"
+  overrideMode: "merged",                    // "merged" | "dns-sniffer-only"
+  rejectQuic: true,                           // false = 允许 HTTP/3（UDP:443）
+  dnsListen: "127.0.0.1:1053"                  // DNS 监听；局域网共享可改 0.0.0.0:1053
 };
 
 var RESIDENTIAL_CREDENTIALS = {
@@ -28,16 +30,18 @@ var RESIDENTIAL_CREDENTIALS = {
 | `enabled: false` | 旁路覆写，config 原样透传 |
 | `overrideMode: "merged"` | DNS / Sniffer + 家宽出口 + 代理组 + 规则 |
 | `overrideMode: "dns-sniffer-only"` | 只写 DNS / Sniffer，不读凭证 |
+| `rejectQuic: false` | 关闭全局 UDP:443 REJECT，恢复 HTTP/3 |
+| `dnsListen` | 覆盖 DNS listen；空串回退 `127.0.0.1:1053` |
 
 ## 工作原理
 
 脚本接收订阅 config，全部接管：
 
 - **代理组** — 清除订阅附带的分组，只保留 `az.*` 管理组和默认代理组。家宽出口和分区测速组注入默认组候选列表。
-- **规则** — 丢弃订阅全部规则，由 POLICY 投影生成。顺序：QUIC 拦截（UDP:443 全局 REJECT）→ AI/支撑/集成域名（suffix + keyword 双轨）→ 媒体域名 → DoH → 直连 → CN → GFW → 进程 → MATCH。
-- **DNS** — Fake-IP 模式、`respect-rules: true`。高敏域名通过 `nameserver-policy` 显式绑定域外 DoH，`sniffer.force-domain` 兜底恢复域名。
+- **规则** — 丢弃订阅全部规则，由 POLICY 投影生成。顺序：QUIC 拦截（可选，UDP:443 全局 REJECT）→ AI/支撑/集成域名（`DOMAIN-SUFFIX`）→ 媒体域名 → DoH → 直连 → CN → GFW → 进程 → MATCH。
+- **DNS** — Fake-IP 模式、`respect-rules: true`，默认监听 `127.0.0.1:1053`。高敏域名通过 `nameserver-policy` 显式绑定域外 DoH，`sniffer.force-domain` 兜底恢复域名。
 - **节点** — 全部保留不动。
-- **默认代理组** — 按关键词（`PROXY`、`节点选择`、`手动选择`、`GLOBAL`）识别，失败时从 MATCH 规则提取。MATCH / DoH / GFW 统一指向它。
+- **默认代理组** — 先精确匹配 `PROXY`/`GLOBAL`，再按关键词（`PROXY`、`节点选择`、`手动选择`、`GLOBAL`）子串匹配，失败时从 MATCH 规则提取。MATCH / DoH / GFW 统一指向它。
 
 ## 代理组
 
@@ -83,7 +87,8 @@ var RESIDENTIAL_CREDENTIALS = {
 以下是有意的设计取舍，了解可避免意外：
 
 - **进程规则在 CN / GFW 之后**：AI / 浏览器进程规则只作兜底，仅当流量未被任何域名规则、`GEOSITE,cn`、`GEOSITE,gfw` 命中时才生效。AI 核心域名由前置 `DOMAIN-SUFFIX` 规则锁定到家宽出口面板，不受影响；但 AI 进程访问的、被 `gfw` 收录且未显式维护的域名会先走默认代理组。
-- **默认代理组按关键词识别**：按 `PROXY` / `节点选择` / `手动选择` / `GLOBAL` 顺序，大小写不敏感地子串匹配第一个命中的组；全部未命中时回退到 `MATCH` 规则提取。若订阅先出现一个名字含这些关键词的非默认组，可能被误选。
+- **默认代理组识别**：先精确匹配 `PROXY`/`GLOBAL`，再关键词子串，最后 MATCH 兜底。若订阅仅有含关键词的非默认组名（无精确名），仍可能被子串选中。
+- **不再生成 `DOMAIN-KEYWORD`**：一级标签子串曾导致误路由（如 `you` 吸走 YouTube）；现仅维护显式 `DOMAIN-SUFFIX`，边缘子域靠 sniffer `force-domain` 兜底。
 
 ## DNS 与 Sniffer
 
@@ -118,7 +123,7 @@ flowchart TD
 - Clash Verge 或兼容 JavaScriptCore 覆写的客户端
 - 代理订阅（`US / JP / HK / SG` 中至少一个地区节点）
 - `merged` 模式需家宽出口中转端点
-- Node.js 仅用于运行测试：`node tests/test.js`（16 单元 + 25 集成）
+- Node.js 仅用于运行测试：`node tests/test.js`（16 单元 + 30 集成）
 
 ## License
 

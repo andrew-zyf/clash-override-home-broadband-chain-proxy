@@ -4,6 +4,22 @@
 
 ---
 
+## v14.8 (2026-07-25)
+
+**缺陷修复**
+- 凭证默认值恢复为空串；拒绝文档占位符（`你的用户名` / `transit.example.com` / `changeme` 等），避免未配置时静默注入假中转。
+- 删除自动 `DOMAIN-KEYWORD` 一级标签生成，消除 `you`→YouTube、`cloud`→国内部署域名等误路由；仅保留 `DOMAIN-SUFFIX`。
+
+**行为增强**
+- 新增 `USER_OPTIONS.rejectQuic`（默认 `true`）：可关闭全局 UDP:443 REJECT。
+- 新增 `USER_OPTIONS.dnsListen`（默认 `127.0.0.1:1053`）：DNS 不再默认监听全接口。
+- 默认代理组识别改为：精确名 `PROXY`/`GLOBAL` → 关键词子串 → MATCH 兜底。
+
+**清理**
+- 移除 `preflightMergedMode` 未使用的 `config` 形参。
+
+- `@version` 14.7 → 14.8。
+
 ## v14.7 (2026-06-19)
 
 **测速探针更换**
