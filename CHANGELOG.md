@@ -4,6 +4,25 @@
 
 ---
 
+## v14.15 (2026-07-25)
+
+**清理有害冗余**
+- 去掉被父域遮蔽的死规则：`docs/weixin/exmail.qq.com`（留 `qq.com`）、`push.apple.com` 路由条目（由 `apple.com` + sniffer skip 覆盖）。
+- 去掉被父网段包含的 CIDR：`100.100.100.100/32`、`fd7a:115c:a1e0::/48`。
+- 删除从未消费的 `POLICY.fallbackFilter` 字段。
+- 压缩 `CN.ai` 与 `CN.cloud` 重叠（通义/阿里云子域）、fake-ip 内 apple/ntp 重复项。
+
+- `@version` 14.14 → 14.15。
+
+## v14.14 (2026-07-25)
+
+**防封号：OAuth 旁路 + ChatGPT Helper + 统一出口约束**
+- Google 登录旁路补 `gstatic.com` / `apis.google.com` / `accounts.youtube.com`，减轻 Chrome「用 Google 登 Claude/ChatGPT」时主站家宽、静态/consent 走机房的 IP 分裂。
+- ChatGPT App 对齐 Claude/Cursor：补 `Helper (Renderer/GPU/Plugin)` 与 `ChatGPT.exe`。
+- README / 代码注释明确：防封号请保持 `🎯 统一出口` 首选家宽，改机房 = 放弃防 DC 风控。
+
+- `@version` 14.13 → 14.14。
+
 ## v14.13 (2026-07-25)
 
 **收窄严管范围 + Cursor/验出口**

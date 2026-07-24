@@ -290,7 +290,7 @@ function testNormalizeOverrideMode() {
 
 // ---- script version marker ----
 function testVersionSingleDefinition() {
-  assert(overrideCode.includes("// @version 14.13"), "Expected @version 14.13");
+  assert(overrideCode.includes("// @version 14.15"), "Expected @version 14.15");
   const versionLines = overrideCode.split('\n').filter((l) =>
     l.includes("@version ")
   );
@@ -345,8 +345,12 @@ function testFakeIpBypassConstant() {
   assert(Array.isArray(bip.gamingRealtime));
   assert(Array.isArray(bip.stunRealtime));
   assert(Array.isArray(bip.homeRouter));
-  assert(bip.localNetwork.includes("+.push.apple.com"));
+  assert(bip.localNetwork.includes("+.lan"));
+  assert(!bip.localNetwork.includes("+.push.apple.com"), "push.apple covered by POLICY apple");
   assert(bip.timeSync.includes("ntp.*.com"));
+  assert(bip.timeSync.includes("+.pool.ntp.org"));
+  assert(!bip.timeSync.includes("pool.ntp.org"), "bare pool.ntp.org removed");
+  assert(!bip.timeSync.includes("time-ios.apple.com"), "apple time hosts covered by POLICY apple");
   assert(bip.stunRealtime.includes("stun.*.*"));
   console.log("  PASS FAKE_IP_BYPASS");
 }
@@ -364,10 +368,12 @@ function testDnsConfigContainsFakeIpBypass() {
 
   const fif = output.dns["fake-ip-filter"];
   assert(Array.isArray(fif), "fake-ip-filter should be array");
-  assert(fif.includes("+.push.apple.com"), "should contain push.apple.com");
+  assert(fif.includes("+.apple.com"), "should contain apple.com via POLICY fakeIpBypass");
   assert(fif.includes("ntp.*.com"), "should contain ntp wildcard");
   assert(fif.includes("stun.*.*"), "should contain stun wildcard");
   assert(fif.includes("+.xboxlive.com"), "should contain xboxlive");
+  assert(fif.includes("+.pool.ntp.org"), "should contain pool.ntp.org wildcard");
+  assert(!fif.includes("pool.ntp.org") || fif.includes("+.pool.ntp.org"), "prefer +.pool.ntp.org");
   assert.strictEqual(output._residential, undefined);
   console.log("  PASS DNS config fake-ip-filter");
 }
@@ -461,7 +467,7 @@ function testBuildResidentialProxyTypeValidation() {
 }
 
 // ===========================================================================
-// Integration tests (ported from validate.js)
+// Integration tests
 // ===========================================================================
 
 // ---- Structural assertions ----
@@ -538,6 +544,8 @@ function assertCoreStrictRouting(output, sandbox) {
     "DOMAIN-SUFFIX,chatgpt.com," + sandbox.UI_GROUPS.ai,
     "DOMAIN-SUFFIX,gemini.google.com," + sandbox.UI_GROUPS.ai,
     "DOMAIN-SUFFIX,accounts.google.com," + sandbox.UI_GROUPS.support,
+    "DOMAIN-SUFFIX,gstatic.com," + sandbox.UI_GROUPS.support,
+    "DOMAIN-SUFFIX,apis.google.com," + sandbox.UI_GROUPS.support,
     "DOMAIN-SUFFIX,cursor.sh," + sandbox.UI_GROUPS.ai,
     "DOMAIN-SUFFIX,arkoselabs.com," + sandbox.UI_GROUPS.integrations,
     "DOMAIN-SUFFIX,stripe.com," + sandbox.UI_GROUPS.integrations,
@@ -548,7 +556,8 @@ function assertCoreStrictRouting(output, sandbox) {
     "PROCESS-NAME,Claude," + sandbox.UI_GROUPS.ai,
     "PROCESS-NAME,claude," + sandbox.UI_GROUPS.ai,
     "PROCESS-NAME,codex," + sandbox.UI_GROUPS.ai,
-    "PROCESS-NAME,Cursor Helper (Renderer)," + sandbox.UI_GROUPS.ai
+    "PROCESS-NAME,Cursor Helper (Renderer)," + sandbox.UI_GROUPS.ai,
+    "PROCESS-NAME,ChatGPT Helper (Renderer)," + sandbox.UI_GROUPS.ai
   ]);
   assertRulesExist(output.rules, [
     "DOMAIN-SUFFIX,meta.ai," + sandbox.UI_GROUPS.ai
@@ -618,7 +627,7 @@ function assertBrowserRoutingPriority(output, sandbox) {
 
   assertRuleAppearsBefore(output.rules, "DOMAIN-SUFFIX,claude.ai," + sandbox.UI_GROUPS.ai, geositeCnRule);
   assertRuleAppearsBefore(output.rules, "DOMAIN-SUFFIX,youtube.com," + sandbox.UI_GROUPS.video, geositeCnRule);
-  assertRuleAppearsBefore(output.rules, "DOMAIN-SUFFIX,docs.qq.com,DIRECT", geositeCnRule);
+  assertRuleAppearsBefore(output.rules, "DOMAIN-SUFFIX,qq.com,DIRECT", geositeCnRule);
   assertRuleAppearsBefore(output.rules, geositeCnRule, geoipCnRule);
 
   assertRuleAppearsBefore(output.rules, geositeCnRule, aiAppRule);
@@ -628,7 +637,7 @@ function assertBrowserRoutingPriority(output, sandbox) {
 
   assertRuleAppearsBefore(output.rules, "DOMAIN-SUFFIX,youtube.com," + sandbox.UI_GROUPS.video, browserRule);
   assertRuleAppearsBefore(output.rules, "DOMAIN-SUFFIX,tailscale.com,DIRECT", browserRule);
-  assertRuleAppearsBefore(output.rules, "DOMAIN-SUFFIX,docs.qq.com,DIRECT", browserRule);
+  assertRuleAppearsBefore(output.rules, "DOMAIN-SUFFIX,qq.com,DIRECT", browserRule);
   // 进程在 GFW 之前：未维护 gfw 域由 AI/浏览器进程接管，不漏到机房默认组
   assertRuleAppearsBefore(output.rules, aiAppRule, gfwRule);
   assertRuleAppearsBefore(output.rules, browserRule, gfwRule);
@@ -650,7 +659,7 @@ function assertBrowserRoutingPriority(output, sandbox) {
 }
 
 function assertDomesticDirectCoverage(output, dnsBase) {
-  const officeDomains = ["+.docs.qq.com", "+.dingtalk.com", "+.feishu.cn", "+.wps.cn"];
+  const officeDomains = ["+.qq.com", "+.dingtalk.com", "+.feishu.cn", "+.wps.cn"];
   const cloudDomains = ["+.aliyuncs.com"];
   assertRulesExist(output.rules, officeDomains.map((d) =>
     "DOMAIN-SUFFIX," + d.replace("+.", "") + ",DIRECT"
@@ -673,9 +682,7 @@ function assertOverseasAppDirectCoverage(output, dnsBase) {
     "DOMAIN-SUFFIX,tailscale.com,DIRECT",
     "DOMAIN-SUFFIX,tailscale.io,DIRECT",
     "DOMAIN-SUFFIX,ts.net,DIRECT",
-    "IP-CIDR,100.64.0.0/10,DIRECT,no-resolve",
-    "IP-CIDR,100.100.100.100/32,DIRECT,no-resolve",
-    "IP-CIDR6,fd7a:115c:a1e0::/48,DIRECT,no-resolve"
+    "IP-CIDR,100.64.0.0/10,DIRECT,no-resolve"
   ]);
   assertRulesMissing(output.rules, [
     "PROCESS-NAME,Tailscale,DIRECT",
@@ -714,12 +721,12 @@ function assertDnsAndSniffer(output, dnsBase) {
   );
   assertNameserverPolicyValues(
     output,
-    ["+.push.apple.com", "+.cnnic.cn", "+.12306.cn"],
+    ["+.apple.com", "+.cnnic.cn", "+.12306.cn"],
     dnsBase.domestic
   );
   assertNameserverPolicyValues(output, ["+.iana.org", "+.ietf.org"], dnsBase.overseas);
 
-  assertIncludes(output.dns["fake-ip-filter"], ["+.push.apple.com", "+.xboxlive.com", "stun.*.*"], "fake-ip-filter");
+  assertIncludes(output.dns["fake-ip-filter"], ["+.apple.com", "+.xboxlive.com", "stun.*.*"], "fake-ip-filter");
   assert.strictEqual(output.dns["fallback-filter"].domain, undefined, "fallback-filter.domain should be absent");
   assertIncludes(
     output.sniffer["force-domain"],
@@ -734,7 +741,7 @@ function assertDnsAndSniffer(output, dnsBase) {
   );
   assertIncludes(
     output.sniffer["skip-domain"],
-    ["+.push.apple.com", "+.tailscale.com", "+.plex.tv", "+.mineru.org.cn"],
+    ["+.apple.com", "+.tailscale.com", "+.plex.tv", "+.mineru.org.cn"],
     "sniffer.skip-domain"
   );
 
@@ -827,11 +834,11 @@ function testUnifiedDnsSnifferOnlyMode() {
   assertNameserverPolicyValues(output, [dnsBase.domesticGeosite], dnsBase.domestic);
   assertNameserverPolicyValues(output, [dnsBase.overseasGeosite], dnsBase.overseas);
   assert.strictEqual(output.dns["nameserver-policy"]["geosite:openai"], undefined);
-  assertNameserverPolicyValues(output, ["+.docs.qq.com", "+.aliyuncs.com"], dnsBase.domestic);
+  assertNameserverPolicyValues(output, ["+.qq.com", "+.aliyuncs.com"], dnsBase.domestic);
   assertNameserverPolicyValues(output, ["+.chatgpt.com", "+.claude.ai", "+.githubusercontent.com"], dnsBase.overseas);
-  assertIncludes(output.dns["fake-ip-filter"], ["+.push.apple.com", "stun.*.*"], "dns-only fake-ip-filter");
+  assertIncludes(output.dns["fake-ip-filter"], ["+.apple.com", "stun.*.*"], "dns-only fake-ip-filter");
   assertIncludes(output.sniffer["force-domain"], ["+.claude.ai", "+.accounts.google.com"], "dns-only sniffer.force-domain");
-  assertIncludes(output.sniffer["skip-domain"], ["+.push.apple.com", "+.tailscale.com"], "dns-only sniffer.skip-domain");
+  assertIncludes(output.sniffer["skip-domain"], ["+.apple.com", "+.tailscale.com"], "dns-only sniffer.skip-domain");
 }
 
 function testAiCliProcessProxyDefaultsOn() {

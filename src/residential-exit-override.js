@@ -4,7 +4,7 @@
 // 请在下面的 RESIDENTIAL_CREDENTIALS 和 USER_OPTIONS 中填写你的配置。
 // 兼容性：Clash Verge / Clash Party 的 JavaScriptCore；只用 ES5 语法。
 //
-// @version 14.13
+// @version 14.15
 
 // ===========================================================================
 // 用户配置
@@ -125,7 +125,6 @@ var DNS_SNIFFER_MODULE = (function () {
   // 原因：NTP 对时、STUN 打洞、游戏主机联机、路由器管理等需要真实 IP。
   var FAKE_IP_BYPASS = {
     localNetwork: [
-      "+.push.apple.com",
       "+.lan",
       "+.local",
       "+.localhost",
@@ -136,11 +135,8 @@ var DNS_SNIFFER_MODULE = (function () {
       "time.*.gov",
       "time.*.edu.cn",
       "time.*.apple.com",
-      "time-ios.apple.com",
-      "time-macos.apple.com",
       "ntp.*.com",
       "ntp1.aliyun.com",
-      "pool.ntp.org",
       "+.pool.ntp.org",
     ],
     connectivityTest: ["+.msftconnecttest.com", "+.msftncsi.com"],
@@ -165,11 +161,15 @@ var DNS_SNIFFER_MODULE = (function () {
   var RESIDENTIAL_EXIT = {
     support: {
       // Google/Microsoft 不再整树进严管：日常邮件/搜索/网盘走 GFW/默认组。
-      // 只留 OAuth / 登录子域，避免 ChatGPT/Claude「用 Google/MS 登录」时 IP 分裂。
+      // OAuth 核心 + 登录旁路静态域进严管，避免 Chrome「用 Google 登 Claude/ChatGPT」时
+      // 主站家宽、consent/gstatic 走机房导致 Arkose/会话指纹分裂。
       google_auth: [
         "+.accounts.google.com",
         "+.oauth2.googleapis.com",
         "+.www.googleapis.com", // 部分 OAuth token / userinfo
+        "+.apis.google.com", // 登录页 JS / GIS
+        "+.gstatic.com", // consent / 登录静态资源（非整树 google.com）
+        "+.accounts.youtube.com", // 偶发 OAuth 联动
       ],
       microsoft_auth: [
         "+.microsoftonline.com",
@@ -406,6 +406,10 @@ var DNS_SNIFFER_MODULE = (function () {
         helperSuffixes: ["Helper"],
         exact: [
           "ChatGPTHelper",
+          "ChatGPT.exe",
+          "ChatGPT Helper (Renderer)",
+          "ChatGPT Helper (GPU)",
+          "ChatGPT Helper (Plugin)",
           "Claude.exe",
           "Claude Helper (Renderer)",
           "Claude Helper (GPU)",
@@ -644,11 +648,7 @@ var DNS_SNIFFER_MODULE = (function () {
   // ---------- CN Direct · 境内直连 ----------
   var CN = {
     ai: {
-      tongyi: [
-        "+.tongyi.aliyun.com",
-        "+.qianwen.aliyun.com",
-        "+.dashscope.aliyuncs.com",
-      ],
+      // 阿里云通义等子域由 CN.cloud 的 aliyun(cs).com 覆盖，不在此重复。
       modelscope: ["+.modelscope.cn"],
       moonshot: ["+.moonshot.cn"],
       zhipu: ["+.chatglm.cn", "+.zhipuai.cn", "+.bigmodel.cn"],
@@ -671,12 +671,8 @@ var DNS_SNIFFER_MODULE = (function () {
     },
     office: {
       tencent_messaging_and_collab: [
-        "+.qq.com",
+        "+.qq.com", // 覆盖 docs/weixin/exmail/work.weixin 等 qq 子域
         "+.qqmail.com",
-        "+.exmail.qq.com",
-        "+.weixin.qq.com",
-        "+.work.weixin.qq.com",
-        "+.docs.qq.com",
         "+.meeting.tencent.com",
       ],
       alibaba_productivity: [
@@ -782,8 +778,8 @@ var DNS_SNIFFER_MODULE = (function () {
 
   // ---------- Local Direct · 本地与推送直连 ----------
   var LOCAL = {
+    // push.apple.com 由 OVERSEAS.special.apple 的 +.apple.com 覆盖，不在此重复。
     local_and_push: [
-      "+.push.apple.com",
       "+.lan",
       "+.local",
       "+.localhost",
@@ -864,32 +860,22 @@ var DNS_SNIFFER_MODULE = (function () {
         value: "169.254.0.0/16",
         target: BASE.ruleTargets.direct,
       },
-      // CGNAT (RFC 6598) + Tailscale magic IP
+      // CGNAT (RFC 6598)；含 Tailscale 所用 100.x 段（含 magic DNS 100.100.100.100）
       {
         type: "IP-CIDR",
         value: "100.64.0.0/10",
         target: BASE.ruleTargets.direct,
       },
-      {
-        type: "IP-CIDR",
-        value: "100.100.100.100/32",
-        target: BASE.ruleTargets.direct,
-      },
-      // IPv6 ULA + 链路本地 + Tailscale ULA
+      // IPv6 ULA + 链路本地（含 Tailscale fd7a:115c:a1e0::/48）
       { type: "IP-CIDR6", value: "fc00::/7", target: BASE.ruleTargets.direct },
       { type: "IP-CIDR6", value: "fe80::/10", target: BASE.ruleTargets.direct },
-      {
-        type: "IP-CIDR6",
-        value: "fd7a:115c:a1e0::/48",
-        target: BASE.ruleTargets.direct,
-      },
     ],
   };
 
   // 端到端样本：声明"这些域名 / 进程必须落到这个出口"。
   //   - 加载期 assertExpectedRoutesCoverage：样本必须能在域名模式中匹配。
   //   - 运行期 validateManagedRouting：每条样本规则的 target 必须正确。
-  //   - tests/validate.js：直接读 sandbox.EXPECTED_ROUTES 当端到端期望。
+  //   - tests/test.js：端到端断言消费 DERIVED / 输出规则。
   // 字段：
   //   domains       裸域名（DOMAIN-SUFFIX 命中）
   //   processNames  受管桌面 App 进程名
@@ -911,6 +897,8 @@ var DNS_SNIFFER_MODULE = (function () {
         "daily-cloudcode-pa.sandbox.googleapis.com",
         "perplexity.ai",
         "accounts.google.com", // Google OAuth（不再整树 google.com）
+        "gstatic.com", // OAuth consent 静态资源
+        "apis.google.com",
         "cursor.sh", // Cursor 后端
         "arkoselabs.com", // Arkose 登录反机器人（integrations.antibot）
         "stripe.com", // AI 订阅支付（integrations.payments）
@@ -927,6 +915,8 @@ var DNS_SNIFFER_MODULE = (function () {
       processNames: [
         "Claude",
         "Claude.exe",
+        "ChatGPT",
+        "ChatGPT Helper (Renderer)",
         "Codex",
         "Codex.exe",
         "Cursor",
@@ -1054,8 +1044,7 @@ var DNS_SNIFFER_MODULE = (function () {
   //   sniffer        "force" | "skip"，省略 = 不参与 sniffer
   //   fakeIpBypass   true = 进入 fake-ip-filter
   //
-  // fallback-filter 只使用 geoip + gfw geosite 兜底，不逐条 domain 列表，
-  // 因为 nameserver-policy 已将高价值域名显式绑定 DoH。
+  // DNS fallback-filter 固定 geoip + geosite:gfw（见 buildDnsFallbackFilter），不按条目投影。
   //
   // 冲突解决：direct 优先于 residential/media（派生时 excludeStrings）。
   function buildPolicy() {
@@ -1067,7 +1056,6 @@ var DNS_SNIFFER_MODULE = (function () {
         route: "residential.support",
         dnsZone: "overseas",
         sniffer: "force",
-        fallbackFilter: true,
       },
       {
         key: "residential.ai",
@@ -1075,7 +1063,6 @@ var DNS_SNIFFER_MODULE = (function () {
         route: "residential.ai",
         dnsZone: "overseas",
         sniffer: "force",
-        fallbackFilter: true,
       },
       {
         key: "residential.integrations",
@@ -1083,7 +1070,6 @@ var DNS_SNIFFER_MODULE = (function () {
         route: "residential.integrations",
         dnsZone: "overseas",
         sniffer: "force",
-        fallbackFilter: true,
       },
 
       // ---- media · 走媒体独立选区 ----
@@ -1092,28 +1078,24 @@ var DNS_SNIFFER_MODULE = (function () {
         patterns: flattenGroupedPatterns(MEDIA.video),
         route: "media.video",
         dnsZone: "overseas",
-        fallbackFilter: true,
       },
       {
         key: "media.music",
         patterns: flattenGroupedPatterns(MEDIA.music),
         route: "media.music",
         dnsZone: "overseas",
-        fallbackFilter: true,
       },
       {
         key: "media.social",
         patterns: flattenGroupedPatterns(MEDIA.social),
         route: "media.social",
         dnsZone: "overseas",
-        fallbackFilter: true,
       },
       {
         key: "media.im",
         patterns: flattenGroupedPatterns(MEDIA.im),
         route: "media.im",
         dnsZone: "overseas",
-        fallbackFilter: true,
       },
 
       // ---- proxy · DoH 端点走通用代理寻址 ----
@@ -1122,7 +1104,6 @@ var DNS_SNIFFER_MODULE = (function () {
         patterns: flattenGroupedPatterns(CDN.doh),
         route: "proxy",
         dnsZone: "overseas",
-        fallbackFilter: true,
       },
       // ---- residential · CDN 基础设施走家宽出口 ----
       {
@@ -1131,7 +1112,6 @@ var DNS_SNIFFER_MODULE = (function () {
         route: "residential.cdn",
         dnsZone: "overseas",
         sniffer: "force",
-        fallbackFilter: true,
       },
       {
         key: "dnsOnly.domestic",
@@ -1142,19 +1122,18 @@ var DNS_SNIFFER_MODULE = (function () {
         key: "dnsOnly.overseas",
         patterns: flattenGroupedPatterns(DNS_ONLY.overseas),
         dnsZone: "overseas",
-        fallbackFilter: true,
       },
 
       // ---- direct · 直连 ----
-      // Apple/iCloud 绑定 domestic DoH：国内有 Apple CDN，域内 DoH 直返 CN 节点，直连最快；
-      // 不经 overseas fallback，避免节点断连时 DNS 卡在等 overseas DoH（Apple 流量本就走 DIRECT）。
+      // Apple/iCloud 绑定 domestic DoH：国内有 Apple CDN，域内 DoH 直返 CN 节点，直连最快。
+      // sniffer skip：含 push.apple.com 等子域，避免误嗅探推送通道。
       {
         key: "direct.apple",
         patterns: flattenGroupedPatterns(OVERSEAS.special.apple),
         route: "direct",
         dnsZone: "domestic",
+        sniffer: "skip",
         fakeIpBypass: true,
-        fallbackFilter: true,
       },
       // Tailscale/ZeroTier/Plex/Synology 等直连应用未被墙，domestic DoH 返回真实 IP 即可，
       // 不走 overseas DoH，避免节点断连时解析卡死。
@@ -1164,7 +1143,6 @@ var DNS_SNIFFER_MODULE = (function () {
         route: "direct",
         dnsZone: "domestic",
         sniffer: "skip",
-        fallbackFilter: true,
       },
       {
         key: "direct.cnAppsOverseasDoh",
@@ -1172,7 +1150,6 @@ var DNS_SNIFFER_MODULE = (function () {
         route: "direct",
         dnsZone: "overseas",
         sniffer: "skip",
-        fallbackFilter: true,
       },
       {
         key: "direct.cn.ai",
@@ -1861,6 +1838,7 @@ function writeResidentialGroup(config) {
 // UI 面板代理组名常量。
 var UI_GROUPS = {
   // 严管三组共用的实际出口选择器；改这一处即可统一 AI/支撑/集成出口 IP。
+  // 防封号：请保持首选「家宽出口」。改成美区/机房测速组 = 整包变 DC IP，前面域名工作归零。
   strictExit: "az.严管调度.🎯 统一出口",
   ai: "az.严管调度.🤖 AI 高敏阵列",
   support: "az.严管调度.🛠️ 支撑平台",
@@ -1873,6 +1851,7 @@ var UI_GROUPS = {
 
 // 写入 UI 面板策略组。
 // 严管：统一出口父组（默认家宽）+ 三分类面板只挂该父组，防止手动改一格导致 IP 分裂。
+// 防封号场景请勿把统一出口改成美区/机房节点组。
 // 媒体：仍美区优先，各组独立可选。
 function writeExpandedProxyGroups(config, residentialTarget, regionalTargets) {
   var proxyGroups = config["proxy-groups"];

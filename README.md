@@ -2,7 +2,7 @@
 
 Clash 覆写脚本。通过 `家宽出口（官方中转）` 提供固定家宽出口，把 AI、开发平台、支付验证、遥测等高敏流量集中到可手动切换的调度面板里，降低出口 IP 不一致带来的风控风险。
 
-**当前版本：** v14.13
+**当前版本：** v14.15
 
 ## 快速开始
 
@@ -52,7 +52,7 @@ var RESIDENTIAL_CREDENTIALS = {
 | `az.分区测速.🇸🇬 新加坡节点组` | url-test | 订阅中的新加坡节点 |
 | `az.分区测速.🇭🇰 香港节点组` | url-test | 订阅中的香港节点 |
 | `az.核心出口.🏠 家宽出口` | select | 只含官方中转节点 |
-| `az.严管调度.🎯 统一出口` | select | 严管实际出口选择（改这一处即可） |
+| `az.严管调度.🎯 统一出口` | select | 严管实际出口选择（改这一处即可；**防封号请保持家宽**） |
 | `az.严管调度.🤖 AI 高敏阵列` | select | AI 域名 / App / CLI / 浏览器 → 只挂统一出口 |
 | `az.严管调度.🛠️ 支撑平台` | select | 开发平台 / CDN 基建 / OAuth 子域 / 出口检测 → 只挂统一出口 |
 | `az.严管调度.🛡️ 生态域集成` | select | Arkose / Stripe / Auth0 / Statsig 等 AI 绑 IP 项 → 只挂统一出口 |
@@ -89,9 +89,9 @@ var RESIDENTIAL_CREDENTIALS = {
 
 以下是有意的设计取舍，了解可避免意外：
 
-- **support / integrations 已收窄**：不再整树 `google.com` / `microsoft.com` / `cloudflare.com`；Google/MS 仅留 OAuth 子域；集成仅留 Arkose/Stripe/Auth0/Clerk/Statsig/Intercom/PostHog 等与 AI 会话绑 IP 的项。出口检测站（ipinfo 等）改走支撑面板以便验证家宽。
-- **严管出口耦合**：AI / 支撑 / 集成三组只挂 `🎯 统一出口`；改统一出口即可保证三类流量同 IP，无法在分类面板上各自另选导致分裂。
-- **进程规则在 CN 之后、GFW 之前**：明确域名与国内直连仍优先；AI / 浏览器进程访问的、被 `gfw` 收录但未显式维护的域名会进严管面板（默认家宽），不再先被 `GEOSITE,gfw` 拆到机房默认组。Chrome 等未列入的浏览器不受进程规则影响。
+- **support / integrations 已收窄**：不再整树 `google.com` / `microsoft.com` / `cloudflare.com`；Google 留 OAuth + `gstatic`/`apis.google.com` 登录旁路；集成仅留 Arkose/Stripe/Auth0/Clerk/Statsig/Intercom/PostHog 等。出口检测站（ipinfo 等）走支撑面板以便验证家宽。
+- **严管出口耦合**：AI / 支撑 / 集成三组只挂 `🎯 统一出口`。防封号请保持统一出口首选家宽；改成美区/机房测速组 = AI+支付+验证整包变 DC IP，前面域名工作归零。
+- **进程规则在 CN 之后、GFW 之前**：明确域名与国内直连仍优先；AI / 浏览器进程访问的、被 `gfw` 收录但未显式维护的域名会进严管面板（默认家宽）。Chrome 等未列入的浏览器不受进程规则影响——网页「用 Google 登录」依赖上方 OAuth 旁路域，勿改统一出口。
 - **默认代理组识别**：先精确匹配 `PROXY`/`GLOBAL`，再关键词子串，最后 MATCH 兜底。若订阅仅有含关键词的非默认组名（无精确名），仍可能被子串选中。
 - **CDN.cloud 不含消费站**：`amazon.com` / `pages.dev` / `workers.dev` 不进支撑面板，落到 GFW/MATCH；`amazonaws.com` / `cloudfront.net` / `cdn.cloudflare.net` 等基础设施仍走支撑。
 - **不再生成 `DOMAIN-KEYWORD`**：一级标签子串曾导致误路由（如 `you` 吸走 YouTube）；现仅维护显式 `DOMAIN-SUFFIX`，边缘子域靠 sniffer `force-domain` 兜底。
