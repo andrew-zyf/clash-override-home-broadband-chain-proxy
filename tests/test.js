@@ -290,7 +290,7 @@ function testNormalizeOverrideMode() {
 
 // ---- script version marker ----
 function testVersionSingleDefinition() {
-  assert(overrideCode.includes("// @version 14.16"), "Expected @version 14.16");
+  assert(overrideCode.includes("// @version 14.17"), "Expected @version 14.17");
   const versionLines = overrideCode.split('\n').filter((l) =>
     l.includes("@version ")
   );
@@ -789,13 +789,24 @@ function testProxyTargetsUseDefaultGroup() {
   assertRulesExist(output.rules, ["MATCH,PROXY"]);
 }
 
-function testRequiresConfiguredResidentialCredentials() {
-  assert.throws(() => runMain(null, (sb) => {
+function testEmptyCredentialsDegradesWithoutTransit() {
+  const { sandbox, output } = runMain(null, (sb) => {
     sb.RESIDENTIAL_CREDENTIALS = {
       username: "", password: "",
       transit: { server: "", port: 8001 }
     };
-  }), /RESIDENTIAL_CREDENTIALS/);
+  });
+  assert.strictEqual(
+    findProxy(output, sandbox.BASE.nodeNames.transit),
+    undefined,
+    "empty credentials must not inject transit"
+  );
+  const residential = findGroup(output, sandbox.BASE.residentialGroupName);
+  assert(residential, "residential group should still exist");
+  assert(residential.proxies.indexOf(sandbox.BASE.nodeNames.transit) < 0);
+  assert(residential.proxies.length > 0);
+  assert.strictEqual(output.dns.enable, true);
+  assertRulesExist(output.rules, ["DOMAIN-SUFFIX,claude.ai," + sandbox.UI_GROUPS.ai]);
 }
 
 function testMergedModeDoesNotRequireRegionNodes() {
@@ -996,22 +1007,25 @@ function testRegionRegexAcceptsUnderscoreAndNoSeparator() {
   assert(findGroup(output, regionGroupName(sandbox, "SG", suffix.base)), "SG group missing (no separator)");
 }
 
-// merged 模式凭证缺失时：抛错前不应写入 config.dns / config.sniffer。
-// 保证 main 要么完整成功要么完整无副作用，避免 Clash Verge 看到半写入配置。
-function testMergedModeDoesNotMutateDnsWhenCredentialsMissing() {
+// merged 模式凭证缺失时：不抛错；仍写入 DNS/规则，且不注入官方中转。
+function testMergedModeDegradesWhenCredentialsMissing() {
   const sandbox = loadCombinedSandbox();
   sandbox.RESIDENTIAL_CREDENTIALS = {
     username: "", password: "",
     transit: { server: "", port: 8001 }
   };
   const config = createBaseConfig();
-  const beforeDns = config.dns;
-  const beforeSniffer = config.sniffer;
+  const output = sandbox.main(config);
 
-  assert.throws(() => sandbox.main(config), /RESIDENTIAL_CREDENTIALS/);
-
-  assert.strictEqual(config.dns, beforeDns, "config.dns should not be mutated on preflight failure");
-  assert.strictEqual(config.sniffer, beforeSniffer, "config.sniffer should not be mutated on preflight failure");
+  assert.strictEqual(output.dns.enable, true);
+  assert.strictEqual(output.sniffer.enable, true);
+  assert.strictEqual(
+    findProxy(output, sandbox.BASE.nodeNames.transit),
+    undefined,
+    "missing credentials must not inject transit"
+  );
+  assert(findGroup(output, sandbox.BASE.residentialGroupName), "residential group present");
+  assert(findGroup(output, sandbox.UI_GROUPS.ai), "AI panel present");
 }
 
 // enabled: false 时 main() 原样返回 config，无任何副作用。
@@ -1074,15 +1088,21 @@ function testSubscriptionProxyGroupsAreCleaned() {
   assert(findGroup(output, sandbox.BASE.residentialGroupName), "managed residential group present");
 }
 
-// 占位凭证在 merged 下必须抛错，不能静默注入假中转。
-function testPlaceholderCredentialsAreRejected() {
-  assert.throws(() => runMain(null, (sb) => {
+// 占位凭证在 merged 下不得注入假中转，应降级为无中转完整覆写。
+function testPlaceholderCredentialsDegradeWithoutTransit() {
+  const { sandbox, output } = runMain(null, (sb) => {
     sb.RESIDENTIAL_CREDENTIALS = {
       username: "你的用户名",
       password: "你的密码",
       transit: { server: "transit.example.com", port: 8001 }
     };
-  }), /RESIDENTIAL_CREDENTIALS/);
+  });
+  assert.strictEqual(
+    findProxy(output, sandbox.BASE.nodeNames.transit),
+    undefined,
+    "placeholder credentials must not inject transit"
+  );
+  assert(findGroup(output, sandbox.UI_GROUPS.ai), "AI panel present with placeholders");
 }
 
 // rejectQuic: false 时不注入全局 UDP:443 REJECT。
@@ -1187,7 +1207,7 @@ const unitTests = [
 const integrationTests = [
   testDefaultConfig,
   testProxyTargetsUseDefaultGroup,
-  testRequiresConfiguredResidentialCredentials,
+  testEmptyCredentialsDegradesWithoutTransit,
   testMergedModeDoesNotRequireRegionNodes,
   testUnifiedDnsSnifferOnlyMode,
   testAiCliProcessProxyDefaultsOn,
@@ -1202,14 +1222,14 @@ const integrationTests = [
   testRegionGroupsCanBeGeneratedFromHKOnly,
   testRegionRegexAcceptsEnglishFullName,
   testRegionRegexAcceptsUnderscoreAndNoSeparator,
-  testMergedModeDoesNotMutateDnsWhenCredentialsMissing,
+  testMergedModeDegradesWhenCredentialsMissing,
   testDisabledMasterSwitch,
   testEnabledMasterSwitchDefault,
   testSubscriptionNonMatchRulesAreCleared,
   testGfwRuleExists,
   testRuleProvidersAreCleared,
   testSubscriptionProxyGroupsAreCleaned,
-  testPlaceholderCredentialsAreRejected,
+  testPlaceholderCredentialsDegradeWithoutTransit,
   testRejectQuicCanBeDisabled,
   testDnsListenCanBeOverridden,
   testDefaultProxyPrefersExactName,

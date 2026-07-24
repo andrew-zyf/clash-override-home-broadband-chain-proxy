@@ -4,7 +4,7 @@
 // 请在下面的 RESIDENTIAL_CREDENTIALS 和 USER_OPTIONS 中填写你的配置。
 // 兼容性：Clash Verge / Clash Party 的 JavaScriptCore；只用 ES5 语法。
 //
-// @version 14.16
+// @version 14.17
 
 // ===========================================================================
 // 用户配置
@@ -1836,17 +1836,35 @@ function writeRegionGroup(config, region, groupNameSuffix) {
   return groupName;
 }
 
-// 创建家宽出口 select 组（仅保留家宽出口官方中转）。
-function writeResidentialGroup(config) {
+// 创建家宽出口 select 组；成员由调用方决定（有凭证=中转，无凭证=地区组/DIRECT）。
+function writeResidentialGroup(config, memberProxies) {
   var residentialGroupName = BASE.residentialGroupName;
 
   upsertNamedItem(config["proxy-groups"], {
     name: residentialGroupName,
     type: "select",
-    proxies: [BASE.nodeNames.transit],
+    proxies: memberProxies.slice(),
   });
 
   return residentialGroupName;
+}
+
+// 无官方中转时，从已生成的地区测速组拼家宽出口候选；都没有则 DIRECT，避免空组。
+function buildDegradedResidentialMembers(regionalTargets) {
+  var members = [];
+  var order = ["US", "JP", "SG", "HK"];
+  for (var i = 0; i < order.length; i++) {
+    if (regionalTargets[order[i]]) members.push(regionalTargets[order[i]]);
+  }
+  if (members.length === 0) members.push("DIRECT");
+  return members;
+}
+
+// 去掉上轮残留的官方中转节点（凭证清空后不应继续挂假节点）。
+function removeResidentialTransitProxy(config) {
+  var proxies = config.proxies || [];
+  var index = findNamedItemIndex(proxies, BASE.nodeNames.transit);
+  if (index >= 0) proxies.splice(index, 1);
 }
 
 // UI 面板代理组名常量。
@@ -1896,24 +1914,19 @@ function writeExpandedProxyGroups(config, residentialTarget, regionalTargets) {
   }
 }
 
-// 解析路由目标：创建家宽出口组、地区测速组、UI 面板组。
-function resolveRoutingTargets(config) {
-  var residentialGroupName = writeResidentialGroup(config);
+// 解析路由目标：地区测速组 → 家宽出口组 → UI 面板。
+// hasTransit=false 时家宽出口降级为地区候选（或 DIRECT），不依赖官方中转。
+function resolveRoutingTargets(config, hasTransit) {
   var defaultProxyGroupName = resolveDefaultProxyGroupName(config);
-
-  // 将家宽出口组注入订阅默认代理组的候选列表
-  writeManagedGroupIntoDefaultProxy(
-    config,
-    residentialGroupName,
-    defaultProxyGroupName,
-  );
-
   var regionalTargets = {};
-  // 为所有已定义地区生成标准 url-test 组
   var definedRegions = ["US", "JP", "HK", "SG"];
-  for (var i = 0; i < definedRegions.length; i++) {
-    var code = definedRegions[i];
-    var standardGroup = writeRegionGroup(
+  var i;
+  var code;
+  var standardGroup;
+
+  for (i = 0; i < definedRegions.length; i++) {
+    code = definedRegions[i];
+    standardGroup = writeRegionGroup(
       config,
       code,
       BASE.groupNameSuffixes.base,
@@ -1928,15 +1941,24 @@ function resolveRoutingTargets(config) {
     }
   }
 
-  // 注入 UI 面板分组
-  writeExpandedProxyGroups(config, residentialGroupName, regionalTargets);
+  var residentialMembers = hasTransit
+    ? [BASE.nodeNames.transit]
+    : buildDegradedResidentialMembers(regionalTargets);
+  var residentialGroupName = writeResidentialGroup(config, residentialMembers);
 
-  // 清除订阅自带的代理组，只保留 az.* 管理组和默认代理组
+  writeManagedGroupIntoDefaultProxy(
+    config,
+    residentialGroupName,
+    defaultProxyGroupName,
+  );
+
+  writeExpandedProxyGroups(config, residentialGroupName, regionalTargets);
   cleanupSubscriptionProxyGroups(config, defaultProxyGroupName);
 
   return {
     residentialGroupName: residentialGroupName,
     defaultProxyTarget: defaultProxyGroupName || residentialGroupName,
+    hasTransit: !!hasTransit,
   };
 }
 
@@ -2205,8 +2227,16 @@ function assertRoutingTargetsExist(config, routingTargets) {
   }
 }
 
-// 断言官方中转节点状态。
-function assertTransitBindings(config) {
+// 断言官方中转节点状态（仅有凭证时）。
+function assertTransitBindings(config, hasTransit) {
+  if (!hasTransit) {
+    if (findProxyByName(config.proxies, BASE.nodeNames.transit)) {
+      throw createUserError(
+        "无家宽凭证时不应残留官方中转节点，请检查节点清理逻辑",
+      );
+    }
+    return;
+  }
   var transitProxy = findProxyByName(config.proxies, BASE.nodeNames.transit);
   if (!transitProxy) {
     throw createUserError(
@@ -2215,19 +2245,37 @@ function assertTransitBindings(config) {
   }
 }
 
-// 断言家宽出口组 shape 与成员集合。
-function assertResidentialGroupShape(config, residentialGroupName) {
-  var expectedMembers = [BASE.nodeNames.transit];
+// 断言家宽出口组 shape：有凭证必须仅挂中转；无凭证不得挂中转且成员须可解析。
+function assertResidentialGroupShape(config, residentialGroupName, hasTransit) {
   var residentialGroup = findProxyGroupByName(
     config["proxy-groups"],
     residentialGroupName,
   );
-  if (
-    !residentialGroup ||
-    residentialGroup.type !== "select" ||
-    !haveSameStringSet(residentialGroup.proxies || [], expectedMembers)
-  ) {
+  if (!residentialGroup || residentialGroup.type !== "select") {
     throw createUserError("当前家宽出口组内容异常，请检查代理组注入逻辑");
+  }
+
+  var proxies = residentialGroup.proxies || [];
+  if (proxies.length === 0) {
+    throw createUserError("当前家宽出口组内容异常，请检查代理组注入逻辑");
+  }
+
+  if (hasTransit) {
+    if (!haveSameStringSet(proxies, [BASE.nodeNames.transit])) {
+      throw createUserError("当前家宽出口组内容异常，请检查代理组注入逻辑");
+    }
+    return;
+  }
+
+  for (var i = 0; i < proxies.length; i++) {
+    var member = proxies[i];
+    if (member === BASE.nodeNames.transit) {
+      throw createUserError("无家宽凭证时家宽出口组不应挂官方中转");
+    }
+    if (member === "DIRECT" || member === "REJECT") continue;
+    if (!hasProxyOrGroup(config, member)) {
+      throw createUserError("当前家宽出口组内容异常，请检查代理组注入逻辑");
+    }
   }
 }
 
@@ -2292,8 +2340,12 @@ function assertRuleTargetBatchExpanded(
 // 验证关键规则目标是否正确写入。
 function validateManagedRouting(config, routingTargets, derived) {
   assertRoutingTargetsExist(config, routingTargets);
-  assertTransitBindings(config);
-  assertResidentialGroupShape(config, routingTargets.residentialGroupName);
+  assertTransitBindings(config, routingTargets.hasTransit);
+  assertResidentialGroupShape(
+    config,
+    routingTargets.residentialGroupName,
+    routingTargets.hasTransit,
+  );
   assertStrictExitCoupling(config);
 
   var ruleLineLookup = buildStringLookup(config.rules);
@@ -2350,16 +2402,22 @@ function buildProcessValidationTargets(processNames) {
   return buildValidationTargets("PROCESS-NAME", processNames);
 }
 
-// 家宽出口入口。装配顺序：容器 → 家宽出口 节点 → 路由目标 → 规则 → 校验。
+// 家宽出口入口。装配顺序：容器 →（可选）中转节点 → 路由目标 → 规则 → 校验。
+// residentialCredentials 为 null 时降级：不注入中转，家宽组改挂地区测速/DIRECT。
 function applyResidentialExit(config, derived, residentialCredentials) {
+  var hasTransit = !!residentialCredentials;
   var routingTargets;
 
-  writeContainers(config); // 初始化基础容器
-  writeResidentialProxies(config, residentialCredentials); // 注入 家宽出口 节点
+  writeContainers(config);
+  if (hasTransit) {
+    writeResidentialProxies(config, residentialCredentials);
+  } else {
+    removeResidentialTransitProxy(config);
+  }
 
-  routingTargets = resolveRoutingTargets(config); // 解析链路目标
-  writeManagedRouting(config, routingTargets, derived); // 写入拨号与规则
-  validateManagedRouting(config, routingTargets, derived); // 校验关键目标
+  routingTargets = resolveRoutingTargets(config, hasTransit);
+  writeManagedRouting(config, routingTargets, derived);
+  validateManagedRouting(config, routingTargets, derived);
 
   return config;
 }
@@ -2462,28 +2520,16 @@ function shouldApplyOnlyDnsAndSniffer() {
   );
 }
 
-function resolveConfiguredResidentialCredentials(credentials) {
+// 有效凭证则克隆返回；空/占位符返回 null（merged 降级，不抛错、不注入假中转）。
+function resolveOptionalResidentialCredentials(credentials) {
   if (hasConfiguredResidentialCredentials(credentials)) {
     return cloneResidentialCredentials(credentials);
   }
-  throw createUserError(
-    "请先填写 RESIDENTIAL_CREDENTIALS 中的用户名、密码和官方中转端点",
-  );
-}
-
-// merged 模式前置校验：在 DNS/Sniffer 写入之前完成所有可抛项。
-function preflightMergedMode() {
-  return resolveConfiguredResidentialCredentials(RESIDENTIAL_CREDENTIALS);
+  return null;
 }
 
 function main(config) {
-  var residentialCredentials = null;
-
   if (USER_OPTIONS.enabled === false) return config;
-
-  if (!shouldApplyOnlyDnsAndSniffer()) {
-    residentialCredentials = preflightMergedMode();
-  }
 
   DNS_SNIFFER_MODULE.apply(config);
   if (shouldApplyOnlyDnsAndSniffer()) {
@@ -2493,6 +2539,6 @@ function main(config) {
   return applyResidentialExit(
     config,
     DNS_SNIFFER_MODULE.DERIVED,
-    residentialCredentials,
+    resolveOptionalResidentialCredentials(RESIDENTIAL_CREDENTIALS),
   );
 }

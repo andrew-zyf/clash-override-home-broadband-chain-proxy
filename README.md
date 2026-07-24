@@ -2,7 +2,7 @@
 
 Clash 覆写脚本。通过 `家宽出口（官方中转）` 提供固定家宽出口，把 AI、开发平台、支付验证、遥测等高敏流量集中到可手动切换的调度面板里，降低出口 IP 不一致带来的风控风险。
 
-**当前版本：** v14.16
+**当前版本：** v14.17
 
 ## 快速开始
 
@@ -28,7 +28,7 @@ var RESIDENTIAL_CREDENTIALS = {
 | 选项 | 说明 |
 |---|---|
 | `enabled: false` | 旁路覆写，config 原样透传 |
-| `overrideMode: "merged"` | DNS / Sniffer + 家宽出口 + 代理组 + 规则 |
+| `overrideMode: "merged"` | DNS / Sniffer + 家宽出口 + 代理组 + 规则；凭证空/占位时降级（不注入中转，其余仍生效） |
 | `overrideMode: "dns-sniffer-only"` | 只写 DNS / Sniffer，不读凭证 |
 | `rejectQuic: false` | 关闭全局 UDP:443 REJECT，恢复 HTTP/3 |
 | `dnsListen` | 覆盖 DNS listen；空串回退 `127.0.0.1:1053` |
@@ -89,6 +89,7 @@ var RESIDENTIAL_CREDENTIALS = {
 
 以下是有意的设计取舍，了解可避免意外：
 
+- **空/占位凭证降级**：`merged` 下不抛错中断；DNS、规则、严管面板照常写入，只是不注入官方中转，家宽出口组改挂地区测速（或 `DIRECT`）。要真正家宽出口仍需填写有效 `RESIDENTIAL_CREDENTIALS`。
 - **support / integrations 已收窄**：不再整树 `google.com` / `microsoft.com` / `cloudflare.com`；Google 留 OAuth（含 `consent` / `gstatic` / `apis` / `googleusercontent`）登录旁路；集成仅留 Arkose/Stripe/Auth0/Clerk/Statsig/Intercom/PostHog 等。出口检测站（ipinfo 等）走支撑面板以便验证家宽。
 - **严管出口耦合**：AI / 支撑 / 集成三组只挂 `🎯 统一出口`。防封号请保持统一出口首选家宽；改成美区/机房测速组 = AI+支付+验证整包变 DC IP，前面域名工作归零。
 - **进程规则在 CN 之后、GFW 之前**：明确域名与国内直连仍优先；AI / 浏览器进程访问的、被 `gfw` 收录但未显式维护的域名会进严管面板（默认家宽）。Chrome 等未列入的浏览器不受进程规则影响——网页「用 Google 登录」依赖上方 OAuth 旁路域，勿改统一出口。
