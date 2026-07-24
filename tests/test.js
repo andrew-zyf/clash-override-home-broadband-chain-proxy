@@ -290,7 +290,7 @@ function testNormalizeOverrideMode() {
 
 // ---- script version marker ----
 function testVersionSingleDefinition() {
-  assert(overrideCode.includes("// @version 14.15"), "Expected @version 14.15");
+  assert(overrideCode.includes("// @version 14.16"), "Expected @version 14.16");
   const versionLines = overrideCode.split('\n').filter((l) =>
     l.includes("@version ")
   );
@@ -544,8 +544,10 @@ function assertCoreStrictRouting(output, sandbox) {
     "DOMAIN-SUFFIX,chatgpt.com," + sandbox.UI_GROUPS.ai,
     "DOMAIN-SUFFIX,gemini.google.com," + sandbox.UI_GROUPS.ai,
     "DOMAIN-SUFFIX,accounts.google.com," + sandbox.UI_GROUPS.support,
+    "DOMAIN-SUFFIX,consent.google.com," + sandbox.UI_GROUPS.support,
     "DOMAIN-SUFFIX,gstatic.com," + sandbox.UI_GROUPS.support,
     "DOMAIN-SUFFIX,apis.google.com," + sandbox.UI_GROUPS.support,
+    "DOMAIN-SUFFIX,googleusercontent.com," + sandbox.UI_GROUPS.support,
     "DOMAIN-SUFFIX,cursor.sh," + sandbox.UI_GROUPS.ai,
     "DOMAIN-SUFFIX,arkoselabs.com," + sandbox.UI_GROUPS.integrations,
     "DOMAIN-SUFFIX,stripe.com," + sandbox.UI_GROUPS.integrations,
@@ -557,7 +559,8 @@ function assertCoreStrictRouting(output, sandbox) {
     "PROCESS-NAME,claude," + sandbox.UI_GROUPS.ai,
     "PROCESS-NAME,codex," + sandbox.UI_GROUPS.ai,
     "PROCESS-NAME,Cursor Helper (Renderer)," + sandbox.UI_GROUPS.ai,
-    "PROCESS-NAME,ChatGPT Helper (Renderer)," + sandbox.UI_GROUPS.ai
+    "PROCESS-NAME,ChatGPT Helper (Renderer)," + sandbox.UI_GROUPS.ai,
+    "PROCESS-NAME,Perplexity Helper (Renderer)," + sandbox.UI_GROUPS.ai
   ]);
   assertRulesExist(output.rules, [
     "DOMAIN-SUFFIX,meta.ai," + sandbox.UI_GROUPS.ai
@@ -847,11 +850,6 @@ function testAiCliProcessProxyDefaultsOn() {
   assertProcessRules(output, false, ["opencode"], sandbox.UI_GROUPS.ai);
 }
 
-function testAiCliProcessProxyAlwaysOn() {
-  const { sandbox, state, output } = runMain();
-  assertProcessRules(output, true, derivedAiCliProcessNames(state), sandbox.UI_GROUPS.ai);
-}
-
 function testOnlyAiAndBrowserProcessesAreManaged() {
   const { sandbox, output } = runMain();
   assertProcessRules(output, false, ["Google Chrome", "Google Drive", "Visual Studio Code"], sandbox.UI_GROUPS.ai);
@@ -861,18 +859,20 @@ function testOnlyAiAndBrowserProcessesAreManaged() {
   ]);
 }
 
-function testMissingStrictTargetFails() {
+// 严管分类面板只挂统一出口；打断耦合应失败。
+function testBrokenStrictExitCouplingFails() {
   assert.throws(() => runMain(
     null,
     (sb) => {
-      const original = sb.resolveRoutingTargets;
-      sb.resolveRoutingTargets = function(config) {
-        const rt = original(config);
-        rt.strictAiTarget = "错误目标";
-        return rt;
+      const original = sb.writeExpandedProxyGroups;
+      sb.writeExpandedProxyGroups = function(config, residentialTarget, regionalTargets) {
+        original(config, residentialTarget, regionalTargets);
+        const ai = (config["proxy-groups"] || []).find((g) => g.name === sb.UI_GROUPS.ai);
+        assert(ai, "AI group should exist before coupling assert");
+        ai.proxies = ["DIRECT"];
       };
     }
-  ), /域外 AI 与支撑平台未直接指向当前家宽出口组/);
+  ), /严管分类面板必须只挂统一出口/);
 }
 
 function testExistingManagedObjectsAreReconciled() {
@@ -1117,6 +1117,20 @@ function testDefaultProxyPrefersExactName() {
   assertRulesExist(output.rules, ["GEOSITE,gfw,PROXY"]);
 }
 
+// MATCH 目标优先于松散关键词子串（避免「PROXY备用」抢走真主组）。
+function testDefaultProxyPrefersMatchOverKeyword() {
+  const { output } = runMain((config) => {
+    config["proxy-groups"] = [
+      { name: "PROXY备用", type: "select", proxies: ["🇸🇬 SG Auto 01"] },
+      { name: "手动选择", type: "select", proxies: ["🇺🇸 US Auto 01"] }
+    ];
+    config.rules = ["MATCH,手动选择"];
+  });
+  assertRulesExist(output.rules, ["MATCH,手动选择"]);
+  assertRulesMissing(output.rules, ["MATCH,PROXY备用"]);
+  assertRulesExist(output.rules, ["GEOSITE,gfw,手动选择"]);
+}
+
 // youtube 走视频面板；无 you keyword 误吸到 AI。
 function testYoutubeNotAbsorbedByAiKeyword() {
   const { sandbox, output } = runMain();
@@ -1177,9 +1191,8 @@ const integrationTests = [
   testMergedModeDoesNotRequireRegionNodes,
   testUnifiedDnsSnifferOnlyMode,
   testAiCliProcessProxyDefaultsOn,
-  testAiCliProcessProxyAlwaysOn,
   testOnlyAiAndBrowserProcessesAreManaged,
-  testMissingStrictTargetFails,
+  testBrokenStrictExitCouplingFails,
   testExistingManagedObjectsAreReconciled,
   testResidentialGroupIsReconciled,
   testBadExternalRegionGroupIsNotReused,
@@ -1200,6 +1213,7 @@ const integrationTests = [
   testRejectQuicCanBeDisabled,
   testDnsListenCanBeOverridden,
   testDefaultProxyPrefersExactName,
+  testDefaultProxyPrefersMatchOverKeyword,
   testYoutubeNotAbsorbedByAiKeyword,
 ];
 

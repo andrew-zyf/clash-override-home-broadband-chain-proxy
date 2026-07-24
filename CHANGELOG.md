@@ -4,6 +4,16 @@
 
 ---
 
+## v14.16 (2026-07-25)
+
+**OAuth / 默认组 / 清理**
+- Google OAuth 旁路补 `consent.google.com`、`googleusercontent.com`，减轻 Chrome 网页登录 IP 分裂。
+- 默认代理组识别改为：精确名 → MATCH 目标 → 关键词子串（避免「PROXY备用」抢真主组）。
+- Perplexity 对齐 Cursor/ChatGPT：补 `Helper (Renderer/GPU/Plugin)` 与 `Perplexity.exe`。
+- 删除恒真 `strictAiTarget` / `assertRoutingTargetCoherence`；合并重复 CLI 进程测试；修正 DNS_ONLY 注释。
+
+- `@version` 14.15 → 14.16。
+
 ## v14.15 (2026-07-25)
 
 **清理有害冗余**

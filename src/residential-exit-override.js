@@ -4,7 +4,7 @@
 // 请在下面的 RESIDENTIAL_CREDENTIALS 和 USER_OPTIONS 中填写你的配置。
 // 兼容性：Clash Verge / Clash Party 的 JavaScriptCore；只用 ES5 语法。
 //
-// @version 14.15
+// @version 14.16
 
 // ===========================================================================
 // 用户配置
@@ -165,10 +165,12 @@ var DNS_SNIFFER_MODULE = (function () {
       // 主站家宽、consent/gstatic 走机房导致 Arkose/会话指纹分裂。
       google_auth: [
         "+.accounts.google.com",
+        "+.consent.google.com", // OAuth consent 页（非整树 google.com）
         "+.oauth2.googleapis.com",
         "+.www.googleapis.com", // 部分 OAuth token / userinfo
         "+.apis.google.com", // 登录页 JS / GIS
-        "+.gstatic.com", // consent / 登录静态资源（非整树 google.com）
+        "+.gstatic.com", // consent / 登录静态资源
+        "+.googleusercontent.com", // 登录头像 / 部分 OAuth 资源
         "+.accounts.youtube.com", // 偶发 OAuth 联动
       ],
       microsoft_auth: [
@@ -421,6 +423,10 @@ var DNS_SNIFFER_MODULE = (function () {
           "Cursor Helper (Renderer)",
           "Cursor Helper (GPU)",
           "Cursor Helper (Plugin)",
+          "Perplexity.exe",
+          "Perplexity Helper (Renderer)",
+          "Perplexity Helper (GPU)",
+          "Perplexity Helper (Plugin)",
           "Antigravity.exe",
           "Antigravity Helper (Renderer)",
           "Antigravity Helper (GPU)",
@@ -827,7 +833,7 @@ var DNS_SNIFFER_MODULE = (function () {
   };
 
   // ---------- DNS Only · 仅解析例外 ----------
-  // 这些域名只进入 nameserver-policy / fallback-filter，不生成分流规则。
+  // 这些域名只进入 nameserver-policy，不生成分流规则。
   // 用于修正 geosite 大类未覆盖或解析质量异常的个别站点。
   var DNS_ONLY = {
     domestic: {
@@ -897,8 +903,10 @@ var DNS_SNIFFER_MODULE = (function () {
         "daily-cloudcode-pa.sandbox.googleapis.com",
         "perplexity.ai",
         "accounts.google.com", // Google OAuth（不再整树 google.com）
+        "consent.google.com",
         "gstatic.com", // OAuth consent 静态资源
         "apis.google.com",
+        "googleusercontent.com",
         "cursor.sh", // Cursor 后端
         "arkoselabs.com", // Arkose 登录反机器人（integrations.antibot）
         "stripe.com", // AI 订阅支付（integrations.payments）
@@ -921,6 +929,8 @@ var DNS_SNIFFER_MODULE = (function () {
         "Codex.exe",
         "Cursor",
         "Cursor Helper (Renderer)",
+        "Perplexity",
+        "Perplexity Helper (Renderer)",
         "Antigravity",
         "Antigravity IDE",
         "language_server",
@@ -1690,7 +1700,8 @@ function defaultProxyGroupNameMatches(groupName, keyword) {
   return groupName.toUpperCase().indexOf(keyword.toUpperCase()) >= 0;
 }
 
-// 识别订阅默认代理组：精确名 → 关键词子串 → MATCH 兜底。
+// 识别订阅默认代理组：精确名 → MATCH 目标 → 关键词子串。
+// MATCH 优先于松散子串，避免「PROXY 备用」类组抢走订阅真主组。
 function resolveDefaultProxyGroupName(config) {
   var proxyGroups = config["proxy-groups"] || [];
   var exactNames = ["PROXY", "GLOBAL"];
@@ -1708,6 +1719,9 @@ function resolveDefaultProxyGroupName(config) {
     }
   }
 
+  var matchTarget = resolveDefaultGroupFromMatch(config);
+  if (matchTarget) return matchTarget;
+
   for (i = 0; i < BASE.defaultProxyGroupKeywords.length; i++) {
     for (j = 0; j < proxyGroups.length; j++) {
       if (
@@ -1720,7 +1734,7 @@ function resolveDefaultProxyGroupName(config) {
       }
     }
   }
-  return resolveDefaultGroupFromMatch(config);
+  return null;
 }
 
 // 从 MATCH 规则提取默认代理组名。
@@ -1923,7 +1937,6 @@ function resolveRoutingTargets(config) {
   return {
     residentialGroupName: residentialGroupName,
     defaultProxyTarget: defaultProxyGroupName || residentialGroupName,
-    strictAiTarget: residentialGroupName,
   };
 }
 
@@ -2185,15 +2198,6 @@ function assertManagedRuleTargetExpanded(
   );
 }
 
-// 断言路由目标一致性：strictAi = 家宽出口组。
-function assertRoutingTargetCoherence(routingTargets) {
-  if (routingTargets.strictAiTarget !== routingTargets.residentialGroupName) {
-    throw createUserError(
-      "域外 AI 与支撑平台未直接指向当前家宽出口组，请检查代理组注入逻辑",
-    );
-  }
-}
-
 // 断言家宽出口组在节点/代理组中存在。
 function assertRoutingTargetsExist(config, routingTargets) {
   if (!hasProxyOrGroup(config, routingTargets.residentialGroupName)) {
@@ -2287,7 +2291,6 @@ function assertRuleTargetBatchExpanded(
 
 // 验证关键规则目标是否正确写入。
 function validateManagedRouting(config, routingTargets, derived) {
-  assertRoutingTargetCoherence(routingTargets);
   assertRoutingTargetsExist(config, routingTargets);
   assertTransitBindings(config);
   assertResidentialGroupShape(config, routingTargets.residentialGroupName);

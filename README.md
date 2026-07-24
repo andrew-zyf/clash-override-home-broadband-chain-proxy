@@ -2,7 +2,7 @@
 
 Clash 覆写脚本。通过 `家宽出口（官方中转）` 提供固定家宽出口，把 AI、开发平台、支付验证、遥测等高敏流量集中到可手动切换的调度面板里，降低出口 IP 不一致带来的风控风险。
 
-**当前版本：** v14.15
+**当前版本：** v14.16
 
 ## 快速开始
 
@@ -41,7 +41,7 @@ var RESIDENTIAL_CREDENTIALS = {
 - **规则** — 丢弃订阅全部规则，由 POLICY 投影生成。顺序：QUIC 拦截（可选，UDP:443 全局 REJECT）→ AI/支撑/集成域名（`DOMAIN-SUFFIX`）→ 媒体域名 → DoH → 直连 → CN → 进程 → GFW → MATCH。
 - **DNS** — Fake-IP 模式、`respect-rules: true`，默认监听 `127.0.0.1:1053`。高敏域名通过 `nameserver-policy` 显式绑定域外 DoH，`sniffer.force-domain` 兜底恢复域名。
 - **节点** — 全部保留不动。
-- **默认代理组** — 先精确匹配 `PROXY`/`GLOBAL`，再按关键词（`PROXY`、`节点选择`、`手动选择`、`GLOBAL`）子串匹配，失败时从 MATCH 规则提取。MATCH / DoH / GFW 统一指向它。
+- **默认代理组** — 先精确匹配 `PROXY`/`GLOBAL`，再从 MATCH 规则提取目标组，最后才按关键词（`PROXY`、`节点选择`、`手动选择`、`GLOBAL`）子串匹配。MATCH / DoH / GFW 统一指向它。
 
 ## 代理组
 
@@ -89,10 +89,10 @@ var RESIDENTIAL_CREDENTIALS = {
 
 以下是有意的设计取舍，了解可避免意外：
 
-- **support / integrations 已收窄**：不再整树 `google.com` / `microsoft.com` / `cloudflare.com`；Google 留 OAuth + `gstatic`/`apis.google.com` 登录旁路；集成仅留 Arkose/Stripe/Auth0/Clerk/Statsig/Intercom/PostHog 等。出口检测站（ipinfo 等）走支撑面板以便验证家宽。
+- **support / integrations 已收窄**：不再整树 `google.com` / `microsoft.com` / `cloudflare.com`；Google 留 OAuth（含 `consent` / `gstatic` / `apis` / `googleusercontent`）登录旁路；集成仅留 Arkose/Stripe/Auth0/Clerk/Statsig/Intercom/PostHog 等。出口检测站（ipinfo 等）走支撑面板以便验证家宽。
 - **严管出口耦合**：AI / 支撑 / 集成三组只挂 `🎯 统一出口`。防封号请保持统一出口首选家宽；改成美区/机房测速组 = AI+支付+验证整包变 DC IP，前面域名工作归零。
 - **进程规则在 CN 之后、GFW 之前**：明确域名与国内直连仍优先；AI / 浏览器进程访问的、被 `gfw` 收录但未显式维护的域名会进严管面板（默认家宽）。Chrome 等未列入的浏览器不受进程规则影响——网页「用 Google 登录」依赖上方 OAuth 旁路域，勿改统一出口。
-- **默认代理组识别**：先精确匹配 `PROXY`/`GLOBAL`，再关键词子串，最后 MATCH 兜底。若订阅仅有含关键词的非默认组名（无精确名），仍可能被子串选中。
+- **默认代理组识别**：精确名 `PROXY`/`GLOBAL` → MATCH 目标（若组存在）→ 关键词子串。避免「PROXY备用」类组抢走订阅 MATCH 真主组。
 - **CDN.cloud 不含消费站**：`amazon.com` / `pages.dev` / `workers.dev` 不进支撑面板，落到 GFW/MATCH；`amazonaws.com` / `cloudfront.net` / `cdn.cloudflare.net` 等基础设施仍走支撑。
 - **不再生成 `DOMAIN-KEYWORD`**：一级标签子串曾导致误路由（如 `you` 吸走 YouTube）；现仅维护显式 `DOMAIN-SUFFIX`，边缘子域靠 sniffer `force-domain` 兜底。
 
