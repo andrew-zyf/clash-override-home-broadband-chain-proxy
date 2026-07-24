@@ -4,6 +4,16 @@
 
 ---
 
+## v14.13 (2026-07-25)
+
+**收窄严管范围 + Cursor/验出口**
+- support：去掉 `google.com` / `microsoft.com` / Office 整树；仅留 Google/MS OAuth 登录子域 + 开发平台/CDN 基建。
+- integrations：去掉 `cloudflare.com` 整域、PayPal/Okta/Datadog/Sentry/Segment 等通用 SaaS；保留 Arkose/Stripe/Auth0/Clerk/Statsig/Intercom/PostHog。
+- 出口检测站（ipinfo / ping0 / ifconfig / ip.sb）改走支撑面板，便于验证家宽生效。
+- Cursor 补齐 `Helper (Renderer/GPU/Plugin)` 进程名；顺带补 `youtu.be` 进视频桶。
+
+- `@version` 14.12 → 14.13。
+
 ## v14.12 (2026-07-25)
 
 **严管出口耦合**

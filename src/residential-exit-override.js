@@ -4,7 +4,7 @@
 // 请在下面的 RESIDENTIAL_CREDENTIALS 和 USER_OPTIONS 中填写你的配置。
 // 兼容性：Clash Verge / Clash Party 的 JavaScriptCore；只用 ES5 语法。
 //
-// @version 14.12
+// @version 14.13
 
 // ===========================================================================
 // 用户配置
@@ -164,34 +164,21 @@ var DNS_SNIFFER_MODULE = (function () {
   // ---------- Residential Exit · 家宽出口 ----------
   var RESIDENTIAL_EXIT = {
     support: {
-      google_core: [
-        "+.google.com",
-        "+.googleapis.com",
-        "+.googleusercontent.com",
-      ],
-      google_static: [
-        "+.gstatic.com",
-        "+.ggpht.com",
-        "+.gvt1.com",
-        "+.gvt2.com",
-      ],
-      google_workspace: ["+.withgoogle.com"], // `googleworkspace.com` 证据不足，先不默认注入
-      google_cloud: ["+.cloud.google.com"],
-      microsoft_core: ["+.microsoft.com", "+.live.com", "+.windows.net"], // `windows.net` 作为 Microsoft 官方基础设施宽域名保留
-      microsoft_productivity: [
-        "+.office.com",
-        "+.office.net",
-        "+.office365.com",
-        "+.m365.cloud.microsoft",
-        "+.sharepoint.com",
-        "+.onenote.com",
-        "+.onedrive.com",
+      // Google/Microsoft 不再整树进严管：日常邮件/搜索/网盘走 GFW/默认组。
+      // 只留 OAuth / 登录子域，避免 ChatGPT/Claude「用 Google/MS 登录」时 IP 分裂。
+      google_auth: [
+        "+.accounts.google.com",
+        "+.oauth2.googleapis.com",
+        "+.www.googleapis.com", // 部分 OAuth token / userinfo
       ],
       microsoft_auth: [
         "+.microsoftonline.com",
         "+.msftauth.net",
         "+.msauth.net",
         "+.msecnd.net",
+        "+.login.live.com",
+        "+.login.microsoft.com",
+        "+.account.microsoft.com",
       ],
       microsoft_developer: [
         "+.visualstudio.com",
@@ -247,6 +234,13 @@ var DNS_SNIFFER_MODULE = (function () {
         "+.linear.app", // Linear 项目管理
         "+.figma.com", // Figma 设计协作
         "+.figstatic.com", // Figma 静态资源
+      ],
+      // 用这些站验证「严管/家宽」是否生效；勿再 DIRECT（否则永远显示本机 IP）。
+      egress_check: [
+        "+.ping0.cc",
+        "+.ipinfo.io",
+        "+.ifconfig.me",
+        "+.ip.sb",
       ],
     },
     ai: {
@@ -366,7 +360,7 @@ var DNS_SNIFFER_MODULE = (function () {
       ],
     },
     // AI 会话共享的第三方集成（反作弊、鉴权、支付、遥测）。
-    // 这些请求的出口 IP 必须与 AI 主会话一致，否则会触发风控。
+    // 仅保留与 AI 登录/订阅强相关、出口 IP 需一致的项；通用 SaaS 整平台不进严管。
     integrations: {
       antibot: [
         "+.arkoselabs.com", // ChatGPT 登录的 Arkose FunCaptcha（token 绑定客户端 IP）
@@ -380,42 +374,24 @@ var DNS_SNIFFER_MODULE = (function () {
         "+.clerk.com", // OpenRouter / 多家 AI 创业用 Clerk
         "+.clerk.dev",
         "+.clerk.accounts.dev",
-        "+.okta.com", // 企业 SSO（含 Anthropic Console 团队席位）
       ],
       payments: [
         "+.stripe.com", // Claude Pro / ChatGPT Plus / Perplexity Pro 主要结算入口
         "+.stripe.network",
-        "+.paypal.com", // PayPal
-        "+.paypalobjects.com", // PayPal CDN
-        "+.paddle.com", // Paddle（Apple 友好的订阅平台）
-        "+.lemonsqueezy.com", // 独立 AI 应用常用
       ],
       customer_engagement: [
         "+.intercom.io", // Intercom 客服（Anthropic / OpenAI 等使用）
         "+.intercomcdn.com",
-        "+.launchdarkly.com", // LaunchDarkly feature flag
-        "+.fullstory.com", // FullStory 会话录制
       ],
       telemetry: [
         "+.statsig.com", // Claude Code / Claude.ai / ChatGPT 的 feature flag
         "+.statsigapi.net",
         "+.featuregates.org",
         "+.featureassets.org",
-        "+.sentry.io", // Sentry 错误上报
-        "+.sentry-cdn.com",
         "+.posthog.com", // PostHog（Claude.ai 等）
-        "+.segment.com", // Segment / Twilio Segment
-        "+.segment.io",
-        "+.segmentapis.com",
-        "+.mixpanel.com",
-        "+.amplitude.com",
-        "+.datadoghq.com", // Datadog RUM 浏览器端
-        "+.browser-intake-datadoghq.com",
       ],
     },
-    force: {
-      cloudflare: ["+.cloudflare.com"],
-    },
+    // challenges.cloudflare.com 已在 ai.openai；不再整域绑 cloudflare.com。
     apps: {
       ai: {
         apps: [
@@ -438,6 +414,9 @@ var DNS_SNIFFER_MODULE = (function () {
           "Codex Helper (Renderer)",
           "Codex Helper (GPU)",
           "Codex Helper (Plugin)",
+          "Cursor Helper (Renderer)",
+          "Cursor Helper (GPU)",
+          "Cursor Helper (Plugin)",
           "Antigravity.exe",
           "Antigravity Helper (Renderer)",
           "Antigravity Helper (GPU)",
@@ -530,6 +509,7 @@ var DNS_SNIFFER_MODULE = (function () {
       // ---- 视频流媒体 ----
       youtube: [
         "+.youtube.com",
+        "+.youtu.be",
         "+.googlevideo.com",
         "+.ytimg.com",
         "+.youtube-nocookie.com",
@@ -824,14 +804,6 @@ var DNS_SNIFFER_MODULE = (function () {
         ],
         services: ["+.apple-cloudkit.com"],
       },
-      egressCheck: {
-        core: [
-          "+.ping0.cc",
-          "+.ipinfo.io",
-          "+.ifconfig.me", // 常用 curl 出口检测
-          "+.ip.sb", // NextDNS 提供的快速出口查询
-        ],
-      },
     },
     global: {
       // 域内应用，但使用域外 DoH 解析以避免域内 DNS 返回错误结果。
@@ -938,11 +910,12 @@ var DNS_SNIFFER_MODULE = (function () {
         "daily-cloudcode-pa.googleapis.com",
         "daily-cloudcode-pa.sandbox.googleapis.com",
         "perplexity.ai",
-        "google.com",
+        "accounts.google.com", // Google OAuth（不再整树 google.com）
         "cursor.sh", // Cursor 后端
         "arkoselabs.com", // Arkose 登录反机器人（integrations.antibot）
         "stripe.com", // AI 订阅支付（integrations.payments）
         "statsig.com", // feature flag（integrations.telemetry）
+        "ipinfo.io", // 出口检测改走支撑/严管，用于验证家宽
         "githubusercontent.com", // GitHub 原始内容，GFW 下易污染
         "npmjs.org", // npm 官方 registry
         "poe.com", // Quora Poe AI 平台
@@ -956,6 +929,8 @@ var DNS_SNIFFER_MODULE = (function () {
         "Claude.exe",
         "Codex",
         "Codex.exe",
+        "Cursor",
+        "Cursor Helper (Renderer)",
         "Antigravity",
         "Antigravity IDE",
         "language_server",
@@ -1110,14 +1085,6 @@ var DNS_SNIFFER_MODULE = (function () {
         sniffer: "force",
         fallbackFilter: true,
       },
-      {
-        key: "residential.cloudflare",
-        patterns: flattenGroupedPatterns(RESIDENTIAL_EXIT.force),
-        route: "residential.cloudflare",
-        dnsZone: "overseas",
-        sniffer: "force",
-        fallbackFilter: true,
-      },
 
       // ---- media · 走媒体独立选区 ----
       {
@@ -1187,14 +1154,6 @@ var DNS_SNIFFER_MODULE = (function () {
         route: "direct",
         dnsZone: "domestic",
         fakeIpBypass: true,
-        fallbackFilter: true,
-      },
-      // 出口检测站 DIRECT 展示本机真实 IP；未被墙，domestic DoH 足够且不依赖代理。
-      {
-        key: "direct.egressCheck",
-        patterns: flattenGroupedPatterns(OVERSEAS.special.egressCheck),
-        route: "direct",
-        dnsZone: "domestic",
         fallbackFilter: true,
       },
       // Tailscale/ZeroTier/Plex/Synology 等直连应用未被墙，domestic DoH 返回真实 IP 即可，
@@ -1298,19 +1257,17 @@ var DNS_SNIFFER_MODULE = (function () {
   //   sniffer  → force / skip 两侧的嗅探决策
   //   fakeIpBypass → 需要返回真实 IP 的域名（Apple 等）
 
-  // 家宽出口 route 顺序与桶分组。support 桶合并 residential.cdn，integrations 桶合并
-  // residential.cloudflare —— 把这条隐藏的合并规则显式写成数据（决定 cdn/cloudflare 落到哪个 UI 面板）。
+  // 家宽出口 route 顺序与桶分组。support 桶合并 residential.cdn。
   var RESIDENTIAL_ROUTES = [
     "residential.ai",
     "residential.support",
     "residential.integrations",
-    "residential.cloudflare",
     "residential.cdn",
   ];
   var RESIDENTIAL_ROUTE_GROUPS = {
     ai: ["residential.ai"],
     support: ["residential.support", "residential.cdn"],
-    integrations: ["residential.integrations", "residential.cloudflare"],
+    integrations: ["residential.integrations"],
   };
   var MEDIA_ROUTE_GROUPS = {
     video: ["media.video"],

@@ -290,7 +290,7 @@ function testNormalizeOverrideMode() {
 
 // ---- script version marker ----
 function testVersionSingleDefinition() {
-  assert(overrideCode.includes("// @version 14.12"), "Expected @version 14.12");
+  assert(overrideCode.includes("// @version 14.13"), "Expected @version 14.13");
   const versionLines = overrideCode.split('\n').filter((l) =>
     l.includes("@version ")
   );
@@ -537,28 +537,39 @@ function assertCoreStrictRouting(output, sandbox) {
     "DOMAIN-SUFFIX,claude.ai," + sandbox.UI_GROUPS.ai,
     "DOMAIN-SUFFIX,chatgpt.com," + sandbox.UI_GROUPS.ai,
     "DOMAIN-SUFFIX,gemini.google.com," + sandbox.UI_GROUPS.ai,
-    "DOMAIN-SUFFIX,perplexity.ai," + sandbox.UI_GROUPS.ai,
-    "DOMAIN-SUFFIX,google.com," + sandbox.UI_GROUPS.support,
+    "DOMAIN-SUFFIX,accounts.google.com," + sandbox.UI_GROUPS.support,
     "DOMAIN-SUFFIX,cursor.sh," + sandbox.UI_GROUPS.ai,
     "DOMAIN-SUFFIX,arkoselabs.com," + sandbox.UI_GROUPS.integrations,
     "DOMAIN-SUFFIX,stripe.com," + sandbox.UI_GROUPS.integrations,
     "DOMAIN-SUFFIX,statsig.com," + sandbox.UI_GROUPS.integrations,
+    "DOMAIN-SUFFIX,ipinfo.io," + sandbox.UI_GROUPS.support,
     "DOMAIN-SUFFIX,githubusercontent.com," + sandbox.UI_GROUPS.support,
     "DOMAIN-SUFFIX,npmjs.org," + sandbox.UI_GROUPS.support,
     "PROCESS-NAME,Claude," + sandbox.UI_GROUPS.ai,
     "PROCESS-NAME,claude," + sandbox.UI_GROUPS.ai,
-    "PROCESS-NAME,codex," + sandbox.UI_GROUPS.ai
+    "PROCESS-NAME,codex," + sandbox.UI_GROUPS.ai,
+    "PROCESS-NAME,Cursor Helper (Renderer)," + sandbox.UI_GROUPS.ai
   ]);
   assertRulesExist(output.rules, [
     "DOMAIN-SUFFIX,meta.ai," + sandbox.UI_GROUPS.ai
   ]);
-  assertRulesMissing(output.rules, ["DOMAIN-SUFFIX,claude.ai,DIRECT"]);
-  assertRulesMissing(output.rules, ["DOMAIN-SUFFIX,meta.ai,DIRECT"]);
+  assertRulesMissing(output.rules, [
+    "DOMAIN-SUFFIX,claude.ai,DIRECT",
+    "DOMAIN-SUFFIX,meta.ai,DIRECT",
+    "DOMAIN-SUFFIX,google.com," + sandbox.UI_GROUPS.support,
+    "DOMAIN-SUFFIX,microsoft.com," + sandbox.UI_GROUPS.support,
+    "DOMAIN-SUFFIX,cloudflare.com," + sandbox.UI_GROUPS.integrations,
+    "DOMAIN-SUFFIX,paypal.com," + sandbox.UI_GROUPS.integrations,
+    "DOMAIN-SUFFIX,okta.com," + sandbox.UI_GROUPS.integrations,
+    "DOMAIN-SUFFIX,datadoghq.com," + sandbox.UI_GROUPS.integrations,
+    "DOMAIN-SUFFIX,ipinfo.io,DIRECT"
+  ]);
 }
 
 function assertMediaRouting(output, sandbox) {
   assertRulesExist(output.rules, [
     "DOMAIN-SUFFIX,youtube.com," + sandbox.UI_GROUPS.video,
+    "DOMAIN-SUFFIX,youtu.be," + sandbox.UI_GROUPS.video,
     "DOMAIN-SUFFIX,x.com," + sandbox.UI_GROUPS.social,
     "DOMAIN-SUFFIX,twitch.tv," + sandbox.UI_GROUPS.video,
     "DOMAIN-SUFFIX,spotify.com," + sandbox.UI_GROUPS.music,
@@ -697,7 +708,7 @@ function assertDnsAndSniffer(output, dnsBase) {
     [
       "+.openai.com", "+.chatgpt.com", "+.sora.com", "+.oaiusercontent.com",
       "+.oaistatic.com", "+.claude.ai", "+.anthropic.com", "+.notebooklm.google",
-      "+.m365.cloud.microsoft", "+.meta.ai"
+      "+.accounts.google.com", "+.meta.ai"
     ],
     dnsBase.overseas
   );
@@ -712,12 +723,13 @@ function assertDnsAndSniffer(output, dnsBase) {
   assert.strictEqual(output.dns["fallback-filter"].domain, undefined, "fallback-filter.domain should be absent");
   assertIncludes(
     output.sniffer["force-domain"],
-    ["+.openai.com", "+.chatgpt.com", "+.claude.ai", "+.anthropic.com", "+.cloudflare.com"],
+    ["+.openai.com", "+.chatgpt.com", "+.claude.ai", "+.anthropic.com", "+.challenges.cloudflare.com"],
     "sniffer.force-domain"
   );
   assertExcludes(
     output.sniffer["force-domain"],
-    ["+", "geosite:cn", "geosite:geolocation-!cn", "geosite:openai"],
+    ["+", "geosite:cn", "geosite:geolocation-!cn", "geosite:openai",
+      "+.cloudflare.com", "+.google.com", "+.microsoft.com"],
     "sniffer.force-domain"
   );
   assertIncludes(
@@ -818,7 +830,7 @@ function testUnifiedDnsSnifferOnlyMode() {
   assertNameserverPolicyValues(output, ["+.docs.qq.com", "+.aliyuncs.com"], dnsBase.domestic);
   assertNameserverPolicyValues(output, ["+.chatgpt.com", "+.claude.ai", "+.githubusercontent.com"], dnsBase.overseas);
   assertIncludes(output.dns["fake-ip-filter"], ["+.push.apple.com", "stun.*.*"], "dns-only fake-ip-filter");
-  assertIncludes(output.sniffer["force-domain"], ["+.claude.ai", "+.google.com"], "dns-only sniffer.force-domain");
+  assertIncludes(output.sniffer["force-domain"], ["+.claude.ai", "+.accounts.google.com"], "dns-only sniffer.force-domain");
   assertIncludes(output.sniffer["skip-domain"], ["+.push.apple.com", "+.tailscale.com"], "dns-only sniffer.skip-domain");
 }
 

@@ -2,7 +2,7 @@
 
 Clash 覆写脚本。通过 `家宽出口（官方中转）` 提供固定家宽出口，把 AI、开发平台、支付验证、遥测等高敏流量集中到可手动切换的调度面板里，降低出口 IP 不一致带来的风控风险。
 
-**当前版本：** v14.12
+**当前版本：** v14.13
 
 ## 快速开始
 
@@ -54,8 +54,8 @@ var RESIDENTIAL_CREDENTIALS = {
 | `az.核心出口.🏠 家宽出口` | select | 只含官方中转节点 |
 | `az.严管调度.🎯 统一出口` | select | 严管实际出口选择（改这一处即可） |
 | `az.严管调度.🤖 AI 高敏阵列` | select | AI 域名 / App / CLI / 浏览器 → 只挂统一出口 |
-| `az.严管调度.🛠️ 支撑平台` | select | Google / Microsoft / GitHub / 开发 / CDN → 只挂统一出口 |
-| `az.严管调度.🛡️ 生态域集成` | select | 反机器人 / 鉴权 / 支付 / 遥测 → 只挂统一出口 |
+| `az.严管调度.🛠️ 支撑平台` | select | 开发平台 / CDN 基建 / OAuth 子域 / 出口检测 → 只挂统一出口 |
+| `az.严管调度.🛡️ 生态域集成` | select | Arkose / Stripe / Auth0 / Statsig 等 AI 绑 IP 项 → 只挂统一出口 |
 | `az.其他调度.🎬 视频流媒体` | select | YouTube / Netflix / Disney+ / Hulu / Twitch 等 |
 | `az.其他调度.🎵 音乐播客` | select | Spotify / SoundCloud / Bandcamp |
 | `az.其他调度.🌐 社交长文` | select | X / Facebook / Instagram / Reddit / LinkedIn 等 |
@@ -77,7 +77,7 @@ var RESIDENTIAL_CREDENTIALS = {
 |---|---|
 | `RESIDENTIAL_EXIT.ai` | `az.严管调度.🤖 AI 高敏阵列` |
 | `RESIDENTIAL_EXIT.support` + `CDN.cloud`（仅基础设施后缀） | `az.严管调度.🛠️ 支撑平台` |
-| `RESIDENTIAL_EXIT.integrations` + Cloudflare | `az.严管调度.🛡️ 生态域集成` |
+| `RESIDENTIAL_EXIT.integrations`（精简：Arkose/Stripe/Auth0/Statsig 等） | `az.严管调度.🛡️ 生态域集成` |
 | `MEDIA.video` | `az.其他调度.🎬 视频流媒体` |
 | `MEDIA.music` | `az.其他调度.🎵 音乐播客` |
 | `MEDIA.social` | `az.其他调度.🌐 社交长文` |
@@ -89,6 +89,7 @@ var RESIDENTIAL_CREDENTIALS = {
 
 以下是有意的设计取舍，了解可避免意外：
 
+- **support / integrations 已收窄**：不再整树 `google.com` / `microsoft.com` / `cloudflare.com`；Google/MS 仅留 OAuth 子域；集成仅留 Arkose/Stripe/Auth0/Clerk/Statsig/Intercom/PostHog 等与 AI 会话绑 IP 的项。出口检测站（ipinfo 等）改走支撑面板以便验证家宽。
 - **严管出口耦合**：AI / 支撑 / 集成三组只挂 `🎯 统一出口`；改统一出口即可保证三类流量同 IP，无法在分类面板上各自另选导致分裂。
 - **进程规则在 CN 之后、GFW 之前**：明确域名与国内直连仍优先；AI / 浏览器进程访问的、被 `gfw` 收录但未显式维护的域名会进严管面板（默认家宽），不再先被 `GEOSITE,gfw` 拆到机房默认组。Chrome 等未列入的浏览器不受进程规则影响。
 - **默认代理组识别**：先精确匹配 `PROXY`/`GLOBAL`，再关键词子串，最后 MATCH 兜底。若订阅仅有含关键词的非默认组名（无精确名），仍可能被子串选中。
