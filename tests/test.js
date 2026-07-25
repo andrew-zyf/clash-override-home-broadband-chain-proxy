@@ -255,7 +255,7 @@ function testNormalizeOverrideMode() {
 }
 
 function testVersionMarker() {
-  assert(overrideCode.includes("// @version 14.42"));
+  assert(overrideCode.includes("// @version 14.44"));
   const lines = overrideCode.split("\n").filter((l) => l.includes("@version "));
   assert.strictEqual(lines.length, 1);
 }
@@ -729,12 +729,16 @@ function testStrictDomainRouting() {
     suffixRule("grok.com", ai),
     suffixRule("accounts.google.com", support),
     suffixRule("consent.google.com", support),
+    suffixRule("oauth2.googleapis.com", support),
     suffixRule("gstatic.com", support),
     suffixRule("npmjs.org", support),
-    suffixRule("azureedge.net", support),
     suffixRule("arkoselabs.com", integrations),
     suffixRule("stripe.com", integrations),
     suffixRule("statsig.com", integrations),
+  ]);
+  assertRulesMissing(output.rules, [
+    suffixRule("www.googleapis.com", support),
+    suffixRule("apis.google.com", support),
   ]);
 }
 
@@ -760,7 +764,11 @@ function testTrimmedStrictListsAbsent() {
     suffixRule("hcaptcha.com", sandbox.UI_GROUPS.integrations),
     suffixRule("clerk.dev", sandbox.UI_GROUPS.integrations),
     suffixRule("ping0.cc", sandbox.UI_GROUPS.support),
-    suffixRule("openaiapi-site.azureedge.net", sandbox.UI_GROUPS.ai),
+    suffixRule("openaiapi-site.azureedge.net", sandbox.UI_GROUPS.support),
+    suffixRule("azureedge.net", sandbox.UI_GROUPS.support),
+    suffixRule("amazonaws.com", sandbox.UI_GROUPS.support),
+    suffixRule("cloudfront.net", sandbox.UI_GROUPS.support),
+    suffixRule("cdn.cloudflare.net", sandbox.UI_GROUPS.support),
     processRule("SunBrowser", sandbox.UI_GROUPS.ai),
   ]);
 }
@@ -787,15 +795,18 @@ function testMediaDomainRouting() {
 
 function testCdnCloudScope() {
   const { sandbox, output } = runMain();
-  assertRulesExist(output.rules, [
+  // 通用云 CDN 不再整后缀进严管；OpenAI 确用域仍在 AI 桶。
+  assertRulesMissing(output.rules, [
     suffixRule("amazonaws.com", sandbox.UI_GROUPS.support),
     suffixRule("cloudfront.net", sandbox.UI_GROUPS.support),
     suffixRule("cdn.cloudflare.net", sandbox.UI_GROUPS.support),
+    suffixRule("azureedge.net", sandbox.UI_GROUPS.support),
+    suffixRule("azurefd.net", sandbox.UI_GROUPS.support),
+    suffixRule("awsstatic.com", sandbox.UI_GROUPS.support),
   ]);
-  assertRulesMissing(output.rules, [
-    suffixRule("amazon.com", sandbox.UI_GROUPS.support),
-    suffixRule("pages.dev", sandbox.UI_GROUPS.support),
-    suffixRule("workers.dev", sandbox.UI_GROUPS.support),
+  assertRulesExist(output.rules, [
+    suffixRule("challenges.cloudflare.com", sandbox.UI_GROUPS.ai),
+    suffixRule("openaicom.imgix.net", sandbox.UI_GROUPS.ai),
   ]);
 }
 
@@ -1138,7 +1149,7 @@ function testExpectedRoutesCoverage() {
   const { sandbox, output } = runMain();
   assertRulesExist(output.rules, [
     suffixRule("claude.ai", sandbox.UI_GROUPS.ai),
-    suffixRule("azureedge.net", sandbox.UI_GROUPS.support),
+    suffixRule("challenges.cloudflare.com", sandbox.UI_GROUPS.ai),
     suffixRule("youtube.com", sandbox.UI_GROUPS.video),
     suffixRule("discord.com", sandbox.UI_GROUPS.im),
   ]);

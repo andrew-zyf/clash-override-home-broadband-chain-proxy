@@ -2,7 +2,7 @@
 
 Clash 覆写脚本（ES5）。把 AI / OAuth / 支付绑到 **防封出口**，媒体与社交绑到 **解锁出口**，降低机房 IP 与出口不一致带来的封号风险。
 
-**版本：** v14.42 · 脚本 [`src/residential-exit-override.js`](src/residential-exit-override.js)
+**版本：** v14.44 · 脚本 [`src/residential-exit-override.js`](src/residential-exit-override.js)
 
 ## 快速开始
 
@@ -73,10 +73,14 @@ QUIC 拦截（可选）
 | 防封（严管） | 解锁 | 不显式维护（GFW / MATCH） |
 |---|---|---|
 | Claude / ChatGPT / Gemini+Antigravity / Meta AI / Perplexity / xAI | YouTube / Netflix / Disney+ / Max / Twitch / Prime | OpenRouter、Mistral、HF、Cursor、部署平台 |
-| GitHub、npm、PyPI；OAuth / Arkose / Stripe / Auth0 | Spotify、X / Facebook / Reddit / TikTok | LinkedIn、Slack、Signal |
-| AWS / Azure / Cloudflare 基建 | Telegram / Discord / LINE / WhatsApp | 整树 google.com / microsoft.com |
+| GitHub、npm、PyPI；Google/MS OAuth 核心；Arkose / Stripe / Auth0 | Spotify、X / Facebook / Reddit / TikTok | LinkedIn、Slack、Signal |
+| OpenAI 确用静态/挑战域（imgix、blob、CF challenges） | Telegram / Discord / LINE / WhatsApp | 整树 google.com / microsoft.com；通用 AWS/Azure/CF CDN；`www.googleapis` / `apis.google` |
 
 进程：Claude / ChatGPT / Codex / Perplexity；Gemini + Antigravity（App / IDE / CLI）；AI 浏览器仅 Comet / Dia / Atlas。不管控 Cursor。
+
+取舍：
+- **进程兜底**：AI App/CLI 在 CN 之后、GFW 之前进防封；未维护但属 GFW 的域也会跟进程走家宽。
+- **AI 浏览器**：Comet / Dia / Atlas 整进程进防封（含非 AI 标签页）；Chrome / Edge / Safari 不列入。
 
 仅 `DOMAIN-SUFFIX`；国内站与局域网 `DIRECT`。
 

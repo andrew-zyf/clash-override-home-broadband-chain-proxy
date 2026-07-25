@@ -1,6 +1,6 @@
 // 家宽出口覆写 — Clash Verge / Clash Party 单文件脚本（ES5）
 // 填写下方 USER_OPTIONS / RESIDENTIAL_CREDENTIALS 后导入覆写页启用。
-// @version 14.42
+// @version 14.44
 
 // ===========================================================================
 // 用户配置
@@ -138,16 +138,14 @@ var DNS_SNIFFER_MODULE = (function () {
   var RESIDENTIAL_EXIT = {
     support: {
       // Google/Microsoft 不再整树进严管：日常邮件/搜索/网盘走 GFW/默认组。
-      // OAuth 核心 + 登录旁路静态域进严管，避免 Chrome「用 Google 登 Claude/ChatGPT」时
-      // 主站家宽、consent/gstatic 走机房导致 Arkose/会话指纹分裂。
+      // OAuth 核心进严管，避免「主站家宽、consent/gstatic 机房」会话分裂。
+      // 不含 www.googleapis.com / apis.google.com：过宽会绑大量非登录 API。
       google_auth: [
         "+.accounts.google.com",
-        "+.consent.google.com", // OAuth consent 页（非整树 google.com）
+        "+.consent.google.com",
         "+.oauth2.googleapis.com",
-        "+.www.googleapis.com", // 部分 OAuth token / userinfo
-        "+.apis.google.com", // 登录页 JS / GIS
-        "+.gstatic.com", // consent / 登录静态资源
-        "+.googleusercontent.com", // 登录头像 / 部分 OAuth 资源
+        "+.gstatic.com", // consent / 登录静态
+        "+.googleusercontent.com", // 登录头像等
         "+.accounts.youtube.com", // 偶发 OAuth 联动
       ],
       microsoft_auth: [
@@ -187,7 +185,6 @@ var DNS_SNIFFER_MODULE = (function () {
         "+.sora.com",
         "+.oaiusercontent.com",
         "+.oaistatic.com",
-        // azureedge / azurefd / cdn.cloudflare 由 CDN.cloud 覆盖。
         "+.openaicom.imgix.net",
         "+.openaicomproductionae4b.blob.core.windows.net",
         "+.chatgpt.livekit.cloud",
@@ -313,15 +310,11 @@ var DNS_SNIFFER_MODULE = (function () {
   };
 
   // --- Global Default · 域外默认代理 ---
+  // DoH 走通用代理寻址；通用云 CDN（AWS/Azure/CF）不再整后缀绑防封，避免非 AI 流量占家宽。
+  // OpenAI 确用的静态/挑战域已写在 RESIDENTIAL_EXIT.ai.openai。
   var CDN = {
     doh: {
       core: ["+.dns.google", "+.cloudflare-dns.com", "+.quad9.net"],
-    },
-    cloud: {
-      // 仅 OpenAI/Claude 等常用云 CDN 后缀；Akamai/Fastly 过宽，不绑防封出口。
-      cloudflare: ["+.cdn.cloudflare.net"],
-      aws: ["+.amazonaws.com", "+.awsstatic.com", "+.cloudfront.net"],
-      azure_cdn: ["+.azureedge.net", "+.azurefd.net"],
     },
   };
 
@@ -634,7 +627,6 @@ var DNS_SNIFFER_MODULE = (function () {
         "claude.ai",
         "chatgpt.com",
         "chat.com",
-        "azureedge.net", // OpenAI Azure CDN 由 CDN.cloud 覆盖进支撑
         "chatgpt.livekit.cloud",
         "challenges.cloudflare.com",
         "gemini.google.com",
@@ -649,7 +641,7 @@ var DNS_SNIFFER_MODULE = (function () {
         "accounts.google.com",
         "consent.google.com",
         "gstatic.com",
-        "apis.google.com",
+        "oauth2.googleapis.com",
         "googleusercontent.com",
         "meta.ai",
         "grok.com",
@@ -839,14 +831,6 @@ var DNS_SNIFFER_MODULE = (function () {
         route: "proxy",
         dnsZone: "overseas",
       },
-      // --- residential · CDN 基础设施走家宽出口 ---
-      {
-        key: "residential.cdn",
-        patterns: flattenGroupedPatterns(CDN.cloud),
-        route: "residential.cdn",
-        dnsZone: "overseas",
-        sniffer: "force",
-      },
       {
         key: "dnsOnly.domestic",
         patterns: flattenGroupedPatterns(DNS_ONLY.domestic),
@@ -961,16 +945,14 @@ var DNS_SNIFFER_MODULE = (function () {
   }
 
   // 从 POLICY 投影 residential/media/direct/proxy/sniffer/fakeIpBypass。
-  // 家宽 route 桶：support 合并 cdn。
   var RESIDENTIAL_ROUTES = [
     "residential.ai",
     "residential.support",
     "residential.integrations",
-    "residential.cdn",
   ];
   var RESIDENTIAL_ROUTE_GROUPS = {
     ai: ["residential.ai"],
-    support: ["residential.support", "residential.cdn"],
+    support: ["residential.support"],
     integrations: ["residential.integrations"],
   };
   var MEDIA_ROUTE_GROUPS = {
