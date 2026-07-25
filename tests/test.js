@@ -61,6 +61,9 @@ function baseConfig() {
       { name: "🇸🇬 SG Auto 01", type: "ss" },
       { name: "🇭🇰 HK Auto 01", type: "ss" },
       { name: "🇺🇸 US Auto 01", type: "ss" },
+      { name: "🇯🇵 JP Auto 01", type: "ss" },
+      { name: "🇰🇷 KR Auto 01", type: "ss" },
+      { name: "🇹🇼 TW Auto 01", type: "ss" },
     ],
     "proxy-groups": [
       { name: "PROXY", type: "select", proxies: ["🇸🇬 SG Auto 01"] },
@@ -117,58 +120,37 @@ function regionGroup(sandbox, code) {
 
 function regionOrder(output, sandbox) {
   const order = [];
-  const us = regionGroup(sandbox, "US");
-  if (findGroup(output, us)) order.push(us);
-  for (const code of ["JP", "SG", "HK"]) {
+  for (const code of sandbox.BASE.regionPreferenceOrder) {
     const name = regionGroup(sandbox, code);
     if (findGroup(output, name)) order.push(name);
   }
   return order;
 }
 
-function residentialExitNames(output, sandbox) {
-  const names = [];
-  if (findProxy(output, sandbox.BASE.nodeNames.homeStatic)) {
-    names.push(sandbox.BASE.nodeNames.homeStatic);
-  }
-  if (findProxy(output, sandbox.BASE.nodeNames.transit)) {
-    names.push(sandbox.BASE.nodeNames.transit);
-  }
-  names.push(sandbox.BASE.residentialGroupName);
-  return names;
-}
-
 function expectedAntiBanChoices(output, sandbox) {
-  const names = [];
-  if (findProxy(output, sandbox.BASE.nodeNames.homeStatic)) {
-    names.push(sandbox.BASE.nodeNames.homeStatic);
+  const home = sandbox.BASE.residentialGroupName;
+  const regions = regionOrder(output, sandbox);
+  const us = regionGroup(sandbox, "US");
+  const usIndex = regions.indexOf(us);
+  if (usIndex >= 0) {
+    return regions
+      .slice(0, usIndex + 1)
+      .concat([home], regions.slice(usIndex + 1));
   }
-  if (findProxy(output, sandbox.BASE.nodeNames.transit)) {
-    names.push(sandbox.BASE.nodeNames.transit);
-  }
-  if (names.length > 0) return names;
-  return [sandbox.BASE.residentialGroupName];
+  return [home].concat(regions);
 }
 
 function expectedUnlockChoices(output, sandbox) {
-  return regionOrder(output, sandbox).concat(
-    residentialExitNames(output, sandbox),
-  );
+  return expectedAntiBanChoices(output, sandbox);
 }
 
 function preferredAntiBan(output, sandbox) {
-  if (findProxy(output, sandbox.BASE.nodeNames.homeStatic)) {
-    return sandbox.BASE.nodeNames.homeStatic;
-  }
-  if (findProxy(output, sandbox.BASE.nodeNames.transit)) {
-    return sandbox.BASE.nodeNames.transit;
-  }
+  const us = regionGroup(sandbox, "US");
+  if (findGroup(output, us)) return us;
   return sandbox.BASE.residentialGroupName;
 }
 
 function preferredUnlock(output, sandbox) {
-  const us = regionGroup(sandbox, "US");
-  if (findGroup(output, us)) return us;
   return preferredAntiBan(output, sandbox);
 }
 
@@ -273,7 +255,7 @@ function testNormalizeOverrideMode() {
 }
 
 function testVersionMarker() {
-  assert(overrideCode.includes("// @version 14.33"));
+  assert(overrideCode.includes("// @version 14.41"));
   const lines = overrideCode.split("\n").filter((l) => l.includes("@version "));
   assert.strictEqual(lines.length, 1);
 }
@@ -284,7 +266,8 @@ function testUiGroupNames() {
   assert.strictEqual(S.UI_GROUPS.support, "az.严管调度.🔑 登录旁路");
   assert.strictEqual(S.UI_GROUPS.integrations, "az.严管调度.💳 支付验证");
   assert.strictEqual(S.UI_GROUPS.otherExit, "az.其他调度.🌏 解锁出口");
-  assert.strictEqual(S.BASE.residentialGroupName, "az.核心出口.🏠 家宽出口");
+  assert.strictEqual(S.BASE.residentialGroupName, "az.其他测速.🏠 家宽节点组");
+  assert.strictEqual(S.BASE.residentialFlag, "🏠");
   assert.notStrictEqual(S.UI_GROUPS.strictExit, S.UI_GROUPS.otherExit);
 }
 
@@ -396,6 +379,25 @@ function testCredentialValidation() {
   assert.strictEqual(exits.transit.username, "shared-user");
   assert.strictEqual(exits.homeStatic.username, "shared-user");
   assert.strictEqual(exits.homeStatic.password, "shared-pass");
+
+  // 旧嵌套认证：顶层为空时回退端点内 username/password
+  const legacy = S.resolveResidentialExits({
+    transit: {
+      server: "5.6.7.8",
+      port: 8001,
+      username: "legacy-user",
+      password: "legacy-pass",
+    },
+    homeStatic: {
+      server: "10.0.0.2",
+      port: 1080,
+      username: "legacy-user",
+      password: "legacy-pass",
+    },
+  });
+  assert.strictEqual(legacy.transit.username, "legacy-user");
+  assert.strictEqual(legacy.homeStatic.username, "legacy-user");
+  assert.strictEqual(legacy.homeStatic.password, "legacy-pass");
 }
 
 function testValidProxyTypes() {
@@ -418,8 +420,8 @@ function testBuildExitProxies() {
   assert.strictEqual(home.type, "socks5");
   assert.strictEqual(home.username, undefined);
 
-  assert.strictEqual(S.BASE.nodeNames.transit, "家宽出口（官方中转）");
-  assert.strictEqual(S.BASE.nodeNames.homeStatic, "家宽出口（静态IP）");
+  assert.strictEqual(S.BASE.nodeNames.transit, "🏠 家宽出口（官方中转）");
+  assert.strictEqual(S.BASE.nodeNames.homeStatic, "🏠 家宽出口（静态IP）");
 
   const saved = S.BASE.validProxyTypes.slice();
   S.BASE.validProxyTypes.splice(S.BASE.validProxyTypes.indexOf("socks5"), 1);
@@ -440,26 +442,57 @@ function testBuildExitProxies() {
 
 function testBuildStrictAntiBanExitChoices() {
   const home = S.BASE.residentialGroupName;
-  // 有实体节点时只挂扁平节点，不套家宽组
-  assert.deepEqual(S.buildStrictAntiBanExitChoices(["a", "b"], home), [
-    "a",
-    "b",
+  const regional = {
+    US: "az.US",
+    SG: "az.SG",
+    JP: "az.JP",
+    KR: "az.KR",
+    TW: "az.TW",
+    HK: "az.HK",
+  };
+  assert.deepEqual(S.BASE.regionPreferenceOrder, [
+    "US",
+    "SG",
+    "JP",
+    "KR",
+    "TW",
+    "HK",
   ]);
-  assert.deepEqual(S.buildStrictAntiBanExitChoices([], home), [home]);
+  assert.deepEqual(S.buildStrictAntiBanExitChoices(home, regional), [
+    "az.US",
+    home,
+    "az.SG",
+    "az.JP",
+    "az.KR",
+    "az.TW",
+    "az.HK",
+  ]);
+  assert.deepEqual(
+    S.buildStrictAntiBanExitChoices(home, { SG: "az.SG", HK: "az.HK" }),
+    [home, "az.SG", "az.HK"],
+  );
+  assert.deepEqual(S.buildStrictAntiBanExitChoices(home, {}), [home]);
 }
 
 function testBuildOtherUnlockExitChoices() {
   const home = S.BASE.residentialGroupName;
   const regional = {
     US: "az.US",
-    JP: "az.JP",
     SG: "az.SG",
+    JP: "az.JP",
+    KR: "az.KR",
+    TW: "az.TW",
     HK: "az.HK",
   };
-  assert.deepEqual(
-    S.buildOtherUnlockExitChoices(["node"], home, regional),
-    ["az.US", "az.JP", "az.SG", "az.HK", "node", home],
-  );
+  assert.deepEqual(S.buildOtherUnlockExitChoices(home, regional), [
+    "az.US",
+    home,
+    "az.SG",
+    "az.JP",
+    "az.KR",
+    "az.TW",
+    "az.HK",
+  ]);
 }
 
 const unitTests = [
@@ -531,15 +564,18 @@ function testAntiBanAndUnlockExits() {
   const { sandbox, output } = runMain();
   const antiBan = findGroup(output, sandbox.UI_GROUPS.strictExit);
   const unlock = findGroup(output, sandbox.UI_GROUPS.otherExit);
+  const expected = expectedAntiBanChoices(output, sandbox);
 
-  assert.deepEqual(antiBan.proxies, expectedAntiBanChoices(output, sandbox));
+  assert.deepEqual(antiBan.proxies, expected);
+  assert.deepEqual(unlock.proxies, expected);
   assert.strictEqual(antiBan.proxies[0], preferredAntiBan(output, sandbox));
-  for (const region of regionOrder(output, sandbox)) {
-    assert(antiBan.proxies.indexOf(region) < 0, "anti-ban has region: " + region);
-  }
-
-  assert.deepEqual(unlock.proxies, expectedUnlockChoices(output, sandbox));
   assert.strictEqual(unlock.proxies[0], preferredUnlock(output, sandbox));
+  assertIncludes(antiBan.proxies, regionOrder(output, sandbox), "anti-ban regions");
+  assertIncludes(
+    antiBan.proxies,
+    [sandbox.BASE.residentialGroupName],
+    "anti-ban residential",
+  );
 }
 
 function testCategoryExitCoupling() {
@@ -591,7 +627,11 @@ function testEmptyCredentialsDegrade() {
   assert(residential.proxies.length > 0);
   assert.deepEqual(
     findGroup(output, sandbox.UI_GROUPS.strictExit).proxies,
-    [sandbox.BASE.residentialGroupName],
+    expectedAntiBanChoices(output, sandbox),
+  );
+  assert.deepEqual(
+    findGroup(output, sandbox.UI_GROUPS.otherExit).proxies,
+    expectedUnlockChoices(output, sandbox),
   );
   assert.strictEqual(output.dns.enable, true);
   assertRulesExist(output.rules, [suffixRule("claude.ai", sandbox.UI_GROUPS.ai)]);
@@ -628,13 +668,13 @@ function testHomeStaticOnly() {
   assert.deepEqual(findGroup(output, sandbox.BASE.residentialGroupName).proxies, [
     sandbox.BASE.nodeNames.homeStatic,
   ]);
-  assert.strictEqual(
-    findGroup(output, sandbox.UI_GROUPS.strictExit).proxies[0],
-    sandbox.BASE.nodeNames.homeStatic,
+  assert.deepEqual(
+    findGroup(output, sandbox.UI_GROUPS.strictExit).proxies,
+    expectedAntiBanChoices(output, sandbox),
   );
 }
 
-function testHomeStaticPreferredOverTransit() {
+function testTransitPreferredOverHomeStatic() {
   const { sandbox, output } = runMain(null, (sb) => {
     sb.RESIDENTIAL_CREDENTIALS.homeStatic = cloneJson(TEST_HOME_STATIC);
   });
@@ -646,12 +686,16 @@ function testHomeStaticPreferredOverTransit() {
   assert.strictEqual(transit.username, TEST_SHARED_AUTH.username);
   assert.strictEqual(home.password, TEST_SHARED_AUTH.password);
   assert.deepEqual(findGroup(output, sandbox.BASE.residentialGroupName).proxies, [
-    sandbox.BASE.nodeNames.homeStatic,
     sandbox.BASE.nodeNames.transit,
-  ]);
-  assert.strictEqual(
-    findGroup(output, sandbox.UI_GROUPS.strictExit).proxies[0],
     sandbox.BASE.nodeNames.homeStatic,
+  ]);
+  assert.deepEqual(
+    findGroup(output, sandbox.UI_GROUPS.strictExit).proxies,
+    expectedAntiBanChoices(output, sandbox),
+  );
+  assert.deepEqual(
+    findGroup(output, sandbox.UI_GROUPS.otherExit).proxies,
+    expectedUnlockChoices(output, sandbox),
   );
 }
 
@@ -1028,6 +1072,31 @@ function testRegionDetection() {
     assert(findGroup(english.output, regionGroup(english.sandbox, code)));
   }
 
+  const asia = runMain((config) => {
+    config.proxies = [
+      { name: "Korea Seoul 01", type: "ss" },
+      { name: "Taiwan Taipei", type: "ss" },
+      { name: "🇰🇷 KR Auto 02", type: "ss" },
+      { name: "🇹🇼 TW Auto 02", type: "ss" },
+    ];
+    config["proxy-groups"] = [
+      { name: "PROXY", type: "select", proxies: ["Korea Seoul 01"] },
+    ];
+    config.rules = ["MATCH,PROXY"];
+  });
+  assert(findGroup(asia.output, regionGroup(asia.sandbox, "KR")));
+  assert(findGroup(asia.output, regionGroup(asia.sandbox, "TW")));
+  assert.strictEqual(asia.sandbox.BASE.regions.TW.flag, "🌸");
+  assert.strictEqual(asia.sandbox.BASE.regions.TW.label, "中华台北");
+  assert.strictEqual(
+    regionGroup(asia.sandbox, "TW"),
+    "az.分区测速.🌸 中华台北节点组",
+  );
+  assert.strictEqual(
+    findGroup(asia.output, "az.分区测速.🇹🇼 台湾节点组"),
+    undefined,
+  );
+
   const compact = runMain((config) => {
     config.proxies = [
       { name: "US_Tokyo_01", type: "ss" },
@@ -1052,10 +1121,11 @@ function testHkOnlyRegion() {
   });
   assert(findGroup(output, regionGroup(sandbox, "HK")));
   assert.strictEqual(findGroup(output, regionGroup(sandbox, "US")), undefined);
-  assert.strictEqual(
-    findGroup(output, sandbox.UI_GROUPS.otherExit).proxies[0],
+  // 无美区时：家宽 → 🇭🇰
+  assert.deepEqual(findGroup(output, sandbox.UI_GROUPS.otherExit).proxies, [
+    sandbox.BASE.residentialGroupName,
     regionGroup(sandbox, "HK"),
-  );
+  ]);
 }
 
 function testDnsOnlyNamesPolicy() {
@@ -1085,7 +1155,7 @@ const integrationTests = [
   ["emptyCredentialsDegrade", testEmptyCredentialsDegrade],
   ["placeholderCredentialsDegrade", testPlaceholderCredentialsDegrade],
   ["homeStaticOnly", testHomeStaticOnly],
-  ["homeStaticPreferredOverTransit", testHomeStaticPreferredOverTransit],
+  ["transitPreferredOverHomeStatic", testTransitPreferredOverHomeStatic],
   ["noRegionNodesStillWorks", testNoRegionNodesStillWorks],
   ["strictDomainRouting", testStrictDomainRouting],
   ["trimmedStrictListsAbsent", testTrimmedStrictListsAbsent],

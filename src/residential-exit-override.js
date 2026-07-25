@@ -1,42 +1,30 @@
-// 家宽 IP 官方中转 — 单文件合并版
-//
-// 使用方式：将此文件作为 Clash 覆写脚本导入。
-// 请在下面的 RESIDENTIAL_CREDENTIALS 和 USER_OPTIONS 中填写你的配置。
-// 兼容性：Clash Verge / Clash Party 的 JavaScriptCore；只用 ES5 语法。
-//
-// @version 14.33
+// 家宽出口覆写 — Clash Verge / Clash Party 单文件脚本（ES5）
+// 填写下方 USER_OPTIONS / RESIDENTIAL_CREDENTIALS 后导入覆写页启用。
+// @version 14.41
 
 // ===========================================================================
 // 用户配置
 // ===========================================================================
 
 var USER_OPTIONS = {
-  enabled: true, // false = 关闭覆写，config 原样透传
-  overrideMode: "merged", // "merged" = 全覆写 | "dns-sniffer-only" = 仅 DNS/Sniffer
-  rejectQuic: true, // false = 不拦截 UDP:443（允许 HTTP/3）
-  dnsListen: "127.0.0.1:1053", // DNS 监听地址；空串回退到此默认
+  enabled: true, // false=旁路透传
+  overrideMode: "merged", // merged | dns-sniffer-only
+  rejectQuic: true, // false=允许 HTTP/3
+  dnsListen: "127.0.0.1:1053", // 空串回退此默认
 };
 
 var RESIDENTIAL_CREDENTIALS = {
   username: "",
   password: "",
-  // 官方中转（SOCKS5）
-  transit: {
-    server: "",
-    port: 8001,
-  },
-  // 静态 IP（SOCKS5）
-  homeStatic: {
-    server: "",
-    port: 8022,
-  },
+  transit: { server: "", port: 8001 },
+  homeStatic: { server: "", port: 8022 },
 };
 
 // ===========================================================================
 // 1. 共享工具函数
 // ===========================================================================
 
-// 对字符串列表做稳定去重，保留首次出现的顺序。
+// 稳定去重，保留首次出现顺序。
 function uniqueStrings(values) {
   var uniqueValues = [];
   var seen = {};
@@ -49,7 +37,7 @@ function uniqueStrings(values) {
   return uniqueValues;
 }
 
-// 为字符串数组构建便于查询的哈希表。
+// 字符串数组 → 查表对象。
 function buildStringLookup(values) {
   var lookup = {};
   for (var i = 0; i < values.length; i++) {
@@ -58,7 +46,7 @@ function buildStringLookup(values) {
   return lookup;
 }
 
-// 把带通配前缀的域名模式转换成规则使用的裸域名后缀。
+// `+.domain` → 规则用裸后缀。
 function toSuffix(domainPattern) {
   return domainPattern.indexOf("+.") === 0
     ? domainPattern.substring(2)
@@ -69,7 +57,7 @@ function createUserError(message) {
   return new Error(message);
 }
 
-// DNS listen：优先 USER_OPTIONS.dnsListen，空值回退环回默认。
+// DNS listen；空值回退 127.0.0.1:1053。
 function resolveDnsListen() {
   var listen = USER_OPTIONS.dnsListen;
   if (listen === undefined || listen === null || listen === "") {
@@ -81,54 +69,37 @@ function resolveDnsListen() {
   return listen;
 }
 
-// rejectQuic 默认 true；显式 false 才关闭全局 QUIC 拦截。
+// rejectQuic 默认开；显式 false 才关。
 function shouldRejectQuic() {
   return USER_OPTIONS.rejectQuic !== false;
 }
 
 // ===========================================================================
-// 3. DNS / Sniffer 策略模块
+// 2. DNS / Sniffer 策略模块
 // ===========================================================================
 
 var DNS_SNIFFER_MODULE = (function () {
-  // ---------------------------------------------------------------------------
-  // 3a. 基础常量
-  // ---------------------------------------------------------------------------
+  // --- 基础常量 ---
 
-  // DNS/Sniffer 模块只保留解析与派生分类所需的运行期常量。
+  // 模块内 DNS 常量。
   var BASE = {
-    ruleTargets: {
-      direct: "DIRECT",
-    },
+    ruleTargets: { direct: "DIRECT" },
     dns: {
-      overseas: [
-        "https://dns.google/dns-query",
-        "https://cloudflare-dns.com/dns-query",
-      ],
-      domestic: [
-        "https://dns.alidns.com/dns-query",
-        "https://doh.pub/dns-query",
-      ],
+      overseas: ["https://dns.google/dns-query", "https://cloudflare-dns.com/dns-query"],
+      domestic: ["https://dns.alidns.com/dns-query", "https://doh.pub/dns-query"],
       domesticGeosite: "geosite:cn",
       overseasGeosite: "geosite:geolocation-!cn",
     },
   };
+  // overseas + Quad9
+  BASE.dns.fallback = BASE.dns.overseas.concat(["https://dns.quad9.net/dns-query"]);
 
-  // fallback 在 overseas 基础上追加 Quad9。
-  BASE.dns.fallback = BASE.dns.overseas.concat([
-    "https://dns.quad9.net/dns-query",
-  ]);
+  // --- 域名模式数据 ---
 
-  // ---------------------------------------------------------------------------
-  // 3a. 域名模式数据
-  // ---------------------------------------------------------------------------
+  // 域名桶只用 `+.domain`；route/dns/sniffer 由 POLICY 注入。
 
-  // 这里只列"哪些域名属于哪个业务桶"，路由/DNS/sniffer 行为统一在下面的 POLICY 注入。
-  // 模式形如 `+.domain`，转成规则时由 `toSuffix` 去掉 `+.` 前缀。
-
-  // ---------- Fake-IP Filter · 需返回真实 IP 的域名 ----------
-  // 这些域名不进入 fake-ip 映射，始终返回真实 DNS 解析结果。
-  // 原因：NTP 对时、STUN 打洞、游戏主机联机、路由器管理等需要真实 IP。
+  // --- Fake-IP Filter · 需真实 IP ---
+  // NTP / STUN / 游戏联机 / 路由管理等不进 fake-ip。
   var FAKE_IP_BYPASS = {
     localNetwork: [
       "+.lan",
@@ -163,7 +134,7 @@ var DNS_SNIFFER_MODULE = (function () {
     ],
   };
 
-  // ---------- Residential Exit · 家宽出口 ----------
+  // --- Residential Exit · 家宽出口 ---
   var RESIDENTIAL_EXIT = {
     support: {
       // Google/Microsoft 不再整树进严管：日常邮件/搜索/网盘走 GFW/默认组。
@@ -341,7 +312,7 @@ var DNS_SNIFFER_MODULE = (function () {
     },
   };
 
-  // ---------- Global Default · 域外默认代理 ----------
+  // --- Global Default · 域外默认代理 ---
   var CDN = {
     doh: {
       core: ["+.dns.google", "+.cloudflare-dns.com", "+.quad9.net"],
@@ -354,7 +325,7 @@ var DNS_SNIFFER_MODULE = (function () {
     },
   };
 
-  // ---------- Media · 其他调度（解锁出口，不走家宽） ----------
+  // --- Media · 其他调度（解锁出口，不走家宽） ---
   // 只维护需地区解锁的主流站；LinkedIn / Slack / Signal / SoundCloud 等落到 GFW/MATCH。
   var MEDIA = {
     video: {
@@ -428,7 +399,7 @@ var DNS_SNIFFER_MODULE = (function () {
     },
   };
 
-  // ---------- CN Direct · 境内直连 ----------
+  // --- CN Direct · 境内直连 ---
   var CN = {
     ai: {
       // 阿里云通义等子域由 CN.cloud 的 aliyun(cs).com 覆盖，不在此重复。
@@ -559,7 +530,7 @@ var DNS_SNIFFER_MODULE = (function () {
     },
   };
 
-  // ---------- Local Direct · 本地与推送直连 ----------
+  // --- Local Direct · 本地与推送直连 ---
   var LOCAL = {
     // push.apple.com 由 OVERSEAS.special.apple 的 +.apple.com 覆盖，不在此重复。
     local_and_push: [
@@ -570,7 +541,7 @@ var DNS_SNIFFER_MODULE = (function () {
     ],
   };
 
-  // ---------- Overseas Direct · 域外 DoH + 直连 ----------
+  // --- Overseas Direct · 域外 DoH + 直连 ---
   var OVERSEAS = {
     special: {
       apple: {
@@ -609,7 +580,7 @@ var DNS_SNIFFER_MODULE = (function () {
     },
   };
 
-  // ---------- DNS Only · 仅解析例外 ----------
+  // --- DNS Only · 仅解析例外 ---
   // 这些域名只进入 nameserver-policy，不生成分流规则。
   // 用于修正 geosite 大类未覆盖或解析质量异常的个别站点。
   var DNS_ONLY = {
@@ -621,7 +592,7 @@ var DNS_SNIFFER_MODULE = (function () {
     },
   };
 
-  // ---------- Network Direct · 网络地址直连 ----------
+  // --- Network Direct · 网络地址直连 ---
   // 私有 / 链路本地 / CGNAT / Tailscale ULA 都走 DIRECT，避免被无意中走代理。
   var NETWORK = {
     direct: [
@@ -655,14 +626,8 @@ var DNS_SNIFFER_MODULE = (function () {
     ],
   };
 
-  // 端到端样本：声明"这些域名 / 进程必须落到这个出口"。
-  //   - 加载期 assertExpectedRoutesCoverage：样本必须能在域名模式中匹配。
-  //   - 运行期 validateManagedRouting：每条样本规则的 target 必须正确。
-  //   - tests/test.js：端到端断言消费 DERIVED / 输出规则。
-  // 字段：
-  //   domains       裸域名（DOMAIN-SUFFIX 命中）
-  //   processNames  受管桌面 App 进程名
-  //   cliNames      AI CLI 可执行名（固定走家宽出口面板）
+  // 端到端样本：domains / processNames / cliNames。
+  // 加载期覆盖检查 + 运行期 target 校验 + tests 消费。
   var EXPECTED_ROUTES = {
     toResidential: {
       domains: [
@@ -736,11 +701,9 @@ var DNS_SNIFFER_MODULE = (function () {
     },
   };
 
-  // ---------------------------------------------------------------------------
-  // 3c. 模块内工具函数
-  // ---------------------------------------------------------------------------
+  // --- 模块内工具函数 ---
 
-  // 合并多组字符串列表并保持稳定去重。
+  // 合并多组字符串并去重。
   function mergeStringGroups(groups) {
     var mergedValues = [];
     for (var i = 0; i < groups.length; i++) {
@@ -749,7 +712,7 @@ var DNS_SNIFFER_MODULE = (function () {
     return uniqueStrings(mergedValues);
   }
 
-  // 为应用展开主进程、显式 helper，以及精确进程名。
+  // 展开 App 主进程 / helper / 精确进程名。
   function expandProcessNamesWithHelpers(
     appNames,
     helperSuffixes,
@@ -771,7 +734,7 @@ var DNS_SNIFFER_MODULE = (function () {
     return uniqueStrings(processNames);
   }
 
-  // 从字符串数组中排除另一组字符串，保留原顺序。
+  // 差集，保留原顺序。
   function excludeStrings(values, excludedValues) {
     var filteredValues = [];
     var excludedLookup = buildStringLookup(excludedValues);
@@ -782,12 +745,11 @@ var DNS_SNIFFER_MODULE = (function () {
     return uniqueStrings(filteredValues);
   }
 
-  // 约束：`+.` 前缀 + 一或多个标签（字母/数字/连字符，不以 `-` 起止），标签间用单个 `.` 分隔，
-  // 禁止 `*`、连续点、首尾点等通配或畸形写法。单标签（如 +.lan）允许。
+  // `+.domain` 形状：标签字母数字连字符，禁 `*` / 连续点 / 首尾点。
   var PATTERN_SHAPE =
     /^\+\.[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/i;
 
-  // 断言所有模式符合 `+.domain` 形状，拦截漏写前缀或通配符滥用。
+  // 断言全部为合法 `+.domain`。
   function assertPatternsHavePlusPrefix(patterns) {
     for (var i = 0; i < patterns.length; i++) {
       if (!PATTERN_SHAPE.test(patterns[i])) {
@@ -798,13 +760,13 @@ var DNS_SNIFFER_MODULE = (function () {
     }
   }
 
-  // ES5 安全的 `endsWith`：判断 str 是否以 suffix 结尾。
+  // ES5 endsWith。
   function endsWithString(str, suffix) {
     if (suffix.length > str.length) return false;
     return str.lastIndexOf(suffix) === str.length - suffix.length;
   }
 
-  // 把按类别分组的域名模式对象展平成单个数组并去重。
+  // 分组模式展平去重。
   function flattenGroupedPatterns(groupedPatterns) {
     var flattenedPatterns = [];
     Object.keys(groupedPatterns).forEach(function (groupName) {
@@ -815,28 +777,13 @@ var DNS_SNIFFER_MODULE = (function () {
     });
     return uniqueStrings(flattenedPatterns);
   }
-  // ---------------------------------------------------------------------------
-  // 3d. 策略表（POLICY）与派生分类
-  // ---------------------------------------------------------------------------
+  // --- 策略表（POLICY）与派生分类 ---
 
-  // POLICY — 所有域名模式的单一权威来源。
-  // 每条 entry 声明 route / dnsZone / sniffer / fakeIpBypass。
-  // 下游 DNS、Sniffer、规则、断言都从 POLICY 投影。
-  //
-  // 字段：
-  //   key            标识（调试用）
-  //   patterns       `+.domain` 模式数组
-  //   route          "residential.*" | "media.*" | "direct" | "proxy"，省略 = 不生成规则
-  //   dnsZone        "overseas" | "domestic"，省略 = 不进 nameserver-policy
-  //   sniffer        "force" | "skip"，省略 = 不参与 sniffer
-  //   fakeIpBypass   true = 进入 fake-ip-filter
-  //
-  // DNS fallback-filter 固定 geoip + geosite:gfw（见 buildDnsFallbackFilter），不按条目投影。
-  //
-  // 冲突解决：direct 优先于 residential/media（派生时 excludeStrings）。
+  // POLICY：域名模式权威源。字段 key/patterns/route/dnsZone/sniffer/fakeIpBypass。
+  // 下游均从此投影；direct 优先于 residential/media；fallback-filter 固定 geoip+gfw。
   function buildPolicy() {
     return [
-      // ---- residential · 走家宽出口 ----
+      // --- residential · 走家宽出口 ---
       {
         key: "residential.support",
         patterns: flattenGroupedPatterns(RESIDENTIAL_EXIT.support),
@@ -859,7 +806,7 @@ var DNS_SNIFFER_MODULE = (function () {
         sniffer: "force",
       },
 
-      // ---- media · 走媒体独立选区 ----
+      // --- media · 走媒体独立选区 ---
       {
         key: "media.video",
         patterns: flattenGroupedPatterns(MEDIA.video),
@@ -885,14 +832,14 @@ var DNS_SNIFFER_MODULE = (function () {
         dnsZone: "overseas",
       },
 
-      // ---- proxy · DoH 端点走通用代理寻址 ----
+      // --- proxy · DoH 端点走通用代理寻址 ---
       {
         key: "default.doh",
         patterns: flattenGroupedPatterns(CDN.doh),
         route: "proxy",
         dnsZone: "overseas",
       },
-      // ---- residential · CDN 基础设施走家宽出口 ----
+      // --- residential · CDN 基础设施走家宽出口 ---
       {
         key: "residential.cdn",
         patterns: flattenGroupedPatterns(CDN.cloud),
@@ -911,7 +858,7 @@ var DNS_SNIFFER_MODULE = (function () {
         dnsZone: "overseas",
       },
 
-      // ---- direct · 直连 ----
+      // --- direct · 直连 ---
       // Apple/iCloud 绑定 domestic DoH：国内有 Apple CDN，域内 DoH 直返 CN 节点，直连最快。
       // sniffer skip：含 push.apple.com 等子域，避免误嗅探推送通道。
       {
@@ -974,14 +921,14 @@ var DNS_SNIFFER_MODULE = (function () {
 
   var POLICY = buildPolicy();
 
-  // 加载期断言：每条 POLICY 条目的 patterns 都符合 `+.domain` 形状。
+  // 加载期：校验 POLICY patterns 形状。
   (function () {
     for (var i = 0; i < POLICY.length; i++) {
       assertPatternsHavePlusPrefix(POLICY[i].patterns);
     }
   })();
 
-  // 投影工具：对每条 POLICY 跑断言函数，把命中的 patterns 合并去重返回。
+  // 按谓词投影 POLICY.patterns 并去重。
   function projectPolicyPatterns(predicate) {
     var result = [];
     for (var i = 0; i < POLICY.length; i++) {
@@ -990,7 +937,7 @@ var DNS_SNIFFER_MODULE = (function () {
     return uniqueStrings(result);
   }
 
-  // POLICY 谓词工厂。
+  // POLICY 谓词。
   function matchRoute(route) {
     return function (entry) {
       return entry.route === route;
@@ -1005,7 +952,7 @@ var DNS_SNIFFER_MODULE = (function () {
     return entry.fakeIpBypass === true;
   }
 
-  // 按 route 投影并应用 direct 优先级。
+  // 按 route 投影（direct 优先）。
   function projectRoutedPatterns(route, directPatterns) {
     return excludeStrings(
       projectPolicyPatterns(matchRoute(route)),
@@ -1013,15 +960,8 @@ var DNS_SNIFFER_MODULE = (function () {
     );
   }
 
-  // 从 POLICY 投影出下游真正消费的三类域名集合：
-  //   residential → 进家宽出口（排除被 direct 抢占的模式）
-  //   media    → 媒体地区组
-  //   direct   → 全量 DIRECT 模式，用于生成直连规则与 fake-ip/sniffer 判断
-  //   proxy    → 进通用代理组（用于强制 DoH 服务器等前跳代理寻址）
-  //   sniffer  → force / skip 两侧的嗅探决策
-  //   fakeIpBypass → 需要返回真实 IP 的域名（Apple 等）
-
-  // 家宽出口 route 顺序与桶分组。support 桶合并 residential.cdn。
+  // 从 POLICY 投影 residential/media/direct/proxy/sniffer/fakeIpBypass。
+  // 家宽 route 桶：support 合并 cdn。
   var RESIDENTIAL_ROUTES = [
     "residential.ai",
     "residential.support",
@@ -1040,8 +980,7 @@ var DNS_SNIFFER_MODULE = (function () {
     im: ["media.im"],
   };
 
-  // 按 routeGroups 把每条 route 投影（排除 direct）后合并成桶；
-  // allRoutes 指定 .all 汇总顺序——桶内合并会重排，.all 需按原始 route 序保持稳定。
+  // 按 routeGroups 投影成桶；.all 保持 allRoutes 顺序。
   function buildRouteGrouped(routeGroups, directPatterns, allRoutes) {
     var grouped = {};
     Object.keys(routeGroups).forEach(function (bucketKey) {
@@ -1095,10 +1034,7 @@ var DNS_SNIFFER_MODULE = (function () {
     };
   }
 
-  // 从 RESIDENTIAL_EXIT.apps 展开出三类进程入口：
-  //   aiApps  → 受管 AI 桌面 App + 显式 helper（始终走家宽出口面板）
-  //   aiCli   → AI 命令行（始终走家宽出口面板）
-  //   browser → AI 浏览器 + 全部 helper（并入 AI 高敏阵列）
+  // 进程入口：aiApps / aiCli / browser。
   function buildDerivedProcessNames() {
     return {
       aiApps: expandProcessNamesWithHelpers(
@@ -1114,7 +1050,7 @@ var DNS_SNIFFER_MODULE = (function () {
     };
   }
 
-  // DERIVED 是后续执行函数唯一应直接消费的派生入口。
+  // 下游唯一派生入口。
   var DERIVED = {
     patterns: buildDerivedPatterns(),
     processNames: buildDerivedProcessNames(),
@@ -1123,7 +1059,7 @@ var DNS_SNIFFER_MODULE = (function () {
     },
   };
 
-  // 判断裸域是否被一组 `+.xxx` 模式覆盖（等值或作为子域）。
+  // 裸域是否命中 `+.xxx`（等值或子域）。
   function isDomainCoveredBySuffixPatterns(domain, suffixPatterns) {
     for (var i = 0; i < suffixPatterns.length; i++) {
       var suffix = toSuffix(suffixPatterns[i]);
@@ -1133,7 +1069,7 @@ var DNS_SNIFFER_MODULE = (function () {
     return false;
   }
 
-  // 断言每个样本域名 / 进程都能在对应的 DERIVED 源集合中找到覆盖，防止样本与源头漂移。
+  // 样本必须被 DERIVED 覆盖，防止漂移。
   function assertExpectedRoutesCoverage() {
     var i;
     var sample;
@@ -1179,12 +1115,10 @@ var DNS_SNIFFER_MODULE = (function () {
 
   assertExpectedRoutesCoverage();
 
-  // 把字符串数组映射为 { type, value } 规则目标列表。
-  // ---------------------------------------------------------------------------
-  // 3e. DNS / Sniffer 配置构建
-  // ---------------------------------------------------------------------------
+  // 字符串 → { type, value } 列表。
+  // --- DNS / Sniffer 配置构建 ---
 
-  // 从 POLICY 按 dnsZone 生成 nameserver-policy 映射。
+  // POLICY → nameserver-policy。
   function buildNameserverPolicy() {
     var dohByZone = {
       overseas: BASE.dns.overseas,
@@ -1208,8 +1142,7 @@ var DNS_SNIFFER_MODULE = (function () {
     return policy;
   }
 
-  // 构建 fake-ip-filter 白名单。
-  // `+.` 匹配域名及子域；中部通配（`time.*.com` 等）保留 glob 写法。
+  // fake-ip-filter；保留中部 glob（如 time.*.com）。
   function buildDnsFakeIpFilter(derived) {
     return []
       .concat(FAKE_IP_BYPASS.localNetwork)
@@ -1221,9 +1154,7 @@ var DNS_SNIFFER_MODULE = (function () {
       .concat(FAKE_IP_BYPASS.homeRouter);
   }
 
-  // DNS fallback-filter 配置。
-  // nameserver-policy 已将高价值域名显式绑定 DoH，不需要 domain 列表重复。
-  // geoip + gfw 兜底处理未被显式覆盖的域名。
+  // fallback-filter：geoip + gfw（高价值域已在 nameserver-policy）。
   function buildDnsFallbackFilter() {
     return {
       geoip: true,
@@ -1233,7 +1164,7 @@ var DNS_SNIFFER_MODULE = (function () {
     };
   }
 
-  // 构建不含动态列表项的基础 DNS 配置。
+  // 基础 DNS 骨架。
   //
   // respect-rules: true — 让 DNS 查询也走分流规则，而不是全部从本地直连发出。
   // 效果：
@@ -1296,9 +1227,7 @@ var DNS_SNIFFER_MODULE = (function () {
     };
   }
 
-  // ---------------------------------------------------------------------------
-  // 3f. 模块入口
-  // ---------------------------------------------------------------------------
+  // --- 模块入口 ---
 
   function applyDnsAndSniffer(config) {
     config.dns = buildDnsConfig(DERIVED);
@@ -1315,82 +1244,56 @@ var DNS_SNIFFER_MODULE = (function () {
 })();
 
 // ===========================================================================
-// 4. 基础常量
+// 3. 基础常量
 // ===========================================================================
 
-// 所有运行期稳定常量的单一来源：地区、节点名、组名后缀、DoH 服务器、规则前缀。
+// 运行期常量：地区、节点名、组名、合法代理类型。
 var BASE = {
+  // 分区顺序；总闸插入家宽后：🇺🇸 → 🏠 → 🇸🇬 → 🇯🇵 → 🇰🇷 → 🌸 → 🇭🇰
+  regionPreferenceOrder: ["US", "SG", "JP", "KR", "TW", "HK"],
   regions: {
-    US: {
-      regex: /🇺🇸|美国|United\s*States|^US(?:[|丨\-_ ]|\d)/i,
-      label: "美国",
-      flag: "🇺🇸",
+    US: { regex: /🇺🇸|美国|United\s*States|^US(?:[|丨\-_ ]|\d)/i, label: "美国", flag: "🇺🇸" },
+    SG: { regex: /🇸🇬|新加坡|Singapore|^SG(?:[|丨\-_ ]|\d)/i, label: "新加坡", flag: "🇸🇬" },
+    JP: { regex: /🇯🇵|日本|Japan|^JP(?:[|丨\-_ ]|\d)/i, label: "日本", flag: "🇯🇵" },
+    KR: { regex: /🇰🇷|韩国|韓國|Korea|^KR(?:[|丨\-_ ]|\d)/i, label: "韩国", flag: "🇰🇷" },
+    // 不用 🇹🇼；🌸=中华台北
+    TW: {
+      regex: /🌸|🇹🇼|中华台北|中華台北|Chinese\s*Taipei|\bTPE\b|台湾|台灣|Taiwan|^TW(?:[|丨\-_ ]|\d)/i,
+      label: "中华台北", flag: "🌸",
     },
-    JP: {
-      regex: /🇯🇵|日本|Japan|^JP(?:[|丨\-_ ]|\d)/i,
-      label: "日本",
-      flag: "🇯🇵",
-    },
-    HK: {
-      regex: /🇭🇰|香港|Hong\s*Kong|^HK(?:[|丨\-_ ]|\d)/i,
-      label: "香港",
-      flag: "🇭🇰",
-    },
-    SG: {
-      regex: /🇸🇬|新加坡|Singapore|^SG(?:[|丨\-_ ]|\d)/i,
-      label: "新加坡",
-      flag: "🇸🇬",
-    },
+    HK: { regex: /🇭🇰|香港|Hong\s*Kong|^HK(?:[|丨\-_ ]|\d)/i, label: "香港", flag: "🇭🇰" },
   },
+  residentialFlag: "🏠",
   nodeNames: {
-    transit: "家宽出口（官方中转）",
-    homeStatic: "家宽出口（静态IP）",
+    transit: "🏠 家宽出口（官方中转）",
+    homeStatic: "🏠 家宽出口（静态IP）",
   },
   defaultProxyGroupKeywords: ["PROXY", "节点选择", "手动选择", "GLOBAL"],
-  ruleTargets: {
-    direct: "DIRECT",
-  },
-  rulePrefixes: {
-    match: "MATCH,", // Clash 兜底规则固定前缀
-  },
+  ruleTargets: { direct: "DIRECT" },
+  rulePrefixes: { match: "MATCH," },
   urlTestProbeUrl: "http://cp.cloudflare.com/generate_204",
   residentialProxyNameKeyword: "家宽出口",
-  groupNameSuffixes: {
-    base: "节点组",
-  },
-  groupNamePrefixes: {
-    base: "az.分区测速.",
-  },
-  residentialGroupName: "az.核心出口.🏠 家宽出口",
-  // Clash 支持的合法代理类型；家宽出口构建会校验 socks5 在此白名单内。
+  groupNameSuffixes: { base: "节点组" },
+  groupNamePrefixes: { base: "az.分区测速." },
+  residentialGroupName: "az.其他测速.🏠 家宽节点组",
   validProxyTypes: [
-    "http",
-    "https",
-    "socks5",
-    "ss",
-    "ssr",
-    "vmess",
-    "trojan",
-    "vless",
-    "hysteria",
-    "tuic",
-    "snell",
-    "wireguard",
+    "http", "https", "socks5", "ss", "ssr", "vmess",
+    "trojan", "vless", "hysteria", "tuic", "snell", "wireguard",
   ],
 };
 
 // ===========================================================================
-// 5. 代理出口与选区
+// 4. 代理出口与选区
 // ===========================================================================
 
-// 确保主配置里存在代理、代理组和规则三个容器。
+// 确保 proxies / proxy-groups / rules 容器存在。
 function writeContainers(config) {
   if (!config.proxies) config.proxies = [];
   if (!config["proxy-groups"]) config["proxy-groups"] = [];
   if (!config.rules) config.rules = [];
 }
 
-// 把地区输入统一转成大写字符串键；非字符串或空串直接拒绝，便于尽早暴露配置错误。
+// 地区键转大写；非法输入直接抛错。
 function normalizeRegionKey(region) {
   if (typeof region !== "string" || region === "") {
     throw createUserError("region 必须是非空字符串，实际: " + region);
@@ -1410,7 +1313,7 @@ function resolveRegionMeta(region) {
   };
 }
 
-// 基于地区国旗与中文标签拼出代理组名称（如 分区测速.🇸🇬 新加坡节点组）。
+// 组名：az.分区测速.<旗> <标签>节点组
 function buildRegionGroupName(regionMeta, groupNameSuffix) {
   return (
     BASE.groupNamePrefixes.base +
@@ -1421,8 +1324,7 @@ function buildRegionGroupName(regionMeta, groupNameSuffix) {
   );
 }
 
-// 生成家宽出口 SOCKS5 节点（官方中转 / 静态IP 共用）。
-// endpoint: { server, port, username, password }；无用户名/密码时不写入认证字段。
+// 家宽 SOCKS5 节点；无认证字段则省略。
 function buildResidentialSocksProxy(endpoint, proxyName) {
   if (BASE.validProxyTypes.indexOf("socks5") < 0) {
     throw createUserError(
@@ -1597,10 +1499,11 @@ function removeNamedProxy(config, proxyName) {
   if (index >= 0) proxies.splice(index, 1);
 }
 
-// 注入已配置的家宽出口节点：静态IP 与/或 官方中转（均为 SOCKS5）。
+// 注入家宽 SOCKS5 节点，并清理旧节点名。
 function writeResidentialExitProxies(config, residentialExits) {
-  // 清理更名/协议变更前的旧节点名，避免订阅里残留。
   removeNamedProxy(config, "家宽出口（家庭静态 IP）");
+  removeNamedProxy(config, "家宽出口（官方中转）");
+  removeNamedProxy(config, "家宽出口（静态IP）");
 
   if (residentialExits.homeStatic) {
     upsertNamedItem(
@@ -1627,19 +1530,19 @@ function writeResidentialExitProxies(config, residentialExits) {
   }
 }
 
-// 已配置的家宽实体节点名（静态IP → 官方中转）。供组内成员与调度扁平挂载共用。
+// 家宽实体名：官方中转 → 静态IP。
 function listResidentialExitNodeNames(residentialExits) {
   var names = [];
-  if (residentialExits && residentialExits.homeStatic) {
-    names.push(BASE.nodeNames.homeStatic);
-  }
   if (residentialExits && residentialExits.transit) {
     names.push(BASE.nodeNames.transit);
+  }
+  if (residentialExits && residentialExits.homeStatic) {
+    names.push(BASE.nodeNames.homeStatic);
   }
   return names;
 }
 
-// 家宽组成员：静态 IP 优先，其次官方中转；都没有则降级。
+// 家宽组成员；无实体则降级挂分区/DIRECT。
 function buildResidentialExitMembers(residentialExits, regionalTargets) {
   var members = listResidentialExitNodeNames(residentialExits);
   if (members.length === 0) {
@@ -1657,6 +1560,11 @@ function writeRegionGroup(config, region, groupNameSuffix) {
   var groupName = buildRegionGroupName(regionMeta, groupNameSuffix);
   var proxyGroups = config["proxy-groups"];
 
+  // 台湾组更名：清掉中华民国旗旧组（无论本轮是否仍有 TW 节点）。
+  if (regionMeta.code === "TW") {
+    removeNamedProxyGroup(config, "az.分区测速.🇹🇼 台湾节点组");
+  }
+
   var regionNodeNames = collectRegionNodeNames(config.proxies, regionRegex);
   if (regionNodeNames.length === 0) return null;
 
@@ -1665,9 +1573,18 @@ function writeRegionGroup(config, region, groupNameSuffix) {
   return groupName;
 }
 
-// 创建家宽出口 select 组；成员由调用方决定（有凭证=中转，无凭证=地区组/DIRECT）。
+// 按名删除代理组。
+function removeNamedProxyGroup(config, groupName) {
+  var groups = config["proxy-groups"] || [];
+  var index = findNamedItemIndex(groups, groupName);
+  if (index >= 0) groups.splice(index, 1);
+}
+
+// 写入家宽 select 组，并清理旧组名。
 function writeResidentialGroup(config, memberProxies) {
   var residentialGroupName = BASE.residentialGroupName;
+  removeNamedProxyGroup(config, "az.核心出口.🏠 家宽出口");
+  removeNamedProxyGroup(config, "az.其他测速.家宽节点组");
 
   upsertNamedItem(config["proxy-groups"], {
     name: residentialGroupName,
@@ -1678,25 +1595,21 @@ function writeResidentialGroup(config, memberProxies) {
   return residentialGroupName;
 }
 
-// 无官方中转时，从已生成的地区测速组拼家宽出口候选；都没有则 DIRECT，避免空组。
+// 无家宽凭证时：分区测速组，否则 DIRECT。
 function buildDegradedResidentialMembers(regionalTargets) {
-  var members = [];
-  var order = ["US", "JP", "SG", "HK"];
-  for (var i = 0; i < order.length; i++) {
-    if (regionalTargets[order[i]]) members.push(regionalTargets[order[i]]);
-  }
+  var members = listRegionalExitChoices(regionalTargets);
   if (members.length === 0) members.push("DIRECT");
   return members;
 }
 
-// UI 面板代理组名常量。
+// UI 面板组名。
 var UI_GROUPS = {
-  // 严管三组共用「防封出口」：有家宽时只挂实体节点，避免误切机房。
+  // 严管 → 防封出口
   strictExit: "az.严管调度.🏠 防封出口",
   ai: "az.严管调度.🤖 AI 服务",
   support: "az.严管调度.🔑 登录旁路",
   integrations: "az.严管调度.💳 支付验证",
-  // 其他调度四组共用「解锁出口」；与防封分离。
+  // 其他 → 解锁出口
   otherExit: "az.其他调度.🌏 解锁出口",
   video: "az.其他调度.🎬 视频流媒体",
   music: "az.其他调度.🎵 音乐播客",
@@ -1704,35 +1617,44 @@ var UI_GROUPS = {
   im: "az.其他调度.💬 即时通讯",
 };
 
-// 防封出口候选：有家宽 → 只挂扁平实体节点（静态 IP → 中转，不套家宽组、不挂地区）；
-// 无家宽降级 → 只挂家宽组（组内为地区/DIRECT）。
-function buildStrictAntiBanExitChoices(exitNodeNames, residentialTarget) {
-  var exitNames = exitNodeNames || [];
-  if (exitNames.length > 0) return uniqueStrings(exitNames);
-  return [residentialTarget];
-}
-
-// 其他解锁出口候选：地区优先，家宽垫后（媒体解锁）。
-function buildOtherUnlockExitChoices(
-  exitNodeNames,
-  residentialTarget,
-  regionalTargets,
-) {
+function listRegionalExitChoices(regionalTargets) {
   var regionOrder = [];
-  var exitNames = exitNodeNames || [];
-  if (regionalTargets.US) regionOrder.push(regionalTargets.US);
-  var remainingRegions = ["JP", "SG", "HK"];
-  for (var j = 0; j < remainingRegions.length; j++) {
-    var target = regionalTargets[remainingRegions[j]];
-    if (target) regionOrder.push(target);
+  var order = BASE.regionPreferenceOrder;
+  var targets = regionalTargets || {};
+  for (var i = 0; i < order.length; i++) {
+    if (targets[order[i]]) regionOrder.push(targets[order[i]]);
   }
-  return uniqueStrings(
-    regionOrder.concat(exitNames).concat([residentialTarget]),
-  );
+  return regionOrder;
 }
 
-// 写入 UI 面板策略组。
-// 防封出口 / 解锁出口互不影响；分类面板只挂各自总闸，避免 AI/支付/验证 IP 分裂。
+// 总闸候选：🇺🇸 → 🏠家宽 → 🇸🇬 → 🇯🇵 → 🇰🇷 → 🌸 → 🇭🇰
+function buildRegionAndResidentialExitChoices(residentialTarget, regionalTargets) {
+  var targets = regionalTargets || {};
+  var order = BASE.regionPreferenceOrder;
+  var choices = [];
+  var insertedHome = false;
+  for (var i = 0; i < order.length; i++) {
+    var code = order[i];
+    if (targets[code]) choices.push(targets[code]);
+    // 家宽紧跟美国；无美区时由循环后补插到最前
+    if (code === "US" && !insertedHome) {
+      choices.push(residentialTarget);
+      insertedHome = true;
+    }
+  }
+  if (!insertedHome) choices.push(residentialTarget);
+  return uniqueStrings(choices);
+}
+
+function buildStrictAntiBanExitChoices(residentialTarget, regionalTargets) {
+  return buildRegionAndResidentialExitChoices(residentialTarget, regionalTargets);
+}
+
+function buildOtherUnlockExitChoices(residentialTarget, regionalTargets) {
+  return buildRegionAndResidentialExitChoices(residentialTarget, regionalTargets);
+}
+
+// 写入 UI 策略组；分类面板只挂各自总闸。
 function writeExpandedProxyGroups(
   config,
   residentialTarget,
@@ -1740,15 +1662,8 @@ function writeExpandedProxyGroups(
   exitNodeNames,
 ) {
   var proxyGroups = config["proxy-groups"];
-  var strictChoices = buildStrictAntiBanExitChoices(
-    exitNodeNames,
-    residentialTarget,
-  );
-  var otherChoices = buildOtherUnlockExitChoices(
-    exitNodeNames,
-    residentialTarget,
-    regionalTargets,
-  );
+  var strictChoices = buildStrictAntiBanExitChoices(residentialTarget, regionalTargets);
+  var otherChoices = buildOtherUnlockExitChoices(residentialTarget, regionalTargets);
   var strictOnly = [UI_GROUPS.strictExit];
   var otherOnly = [UI_GROUPS.otherExit];
 
@@ -1773,7 +1688,7 @@ function writeExpandedProxyGroups(
 function resolveRoutingTargets(config, residentialExits) {
   var defaultProxyGroupName = resolveDefaultProxyGroupName(config);
   var regionalTargets = {};
-  var definedRegions = ["US", "JP", "HK", "SG"];
+  var definedRegions = BASE.regionPreferenceOrder;
   var i;
   var code;
   var standardGroup;
@@ -1893,16 +1808,15 @@ function cleanupSubscriptionProxyGroups(config, defaultProxyGroupName) {
   config["proxy-groups"] = managedGroups;
 }
 
-// 写入分流规则。
 function writeManagedRouting(config, routingTargets, derived) {
   writeManagedRules(config, routingTargets, derived);
 }
 
 // ===========================================================================
-// 6. 规则注入
+// 5. 规则注入
 // ===========================================================================
 
-// 提取规则的 `"TYPE,value"` 标识。
+// 规则标识 TYPE,value。
 function getRuleIdentity(ruleLine) {
   var firstCommaIndex = ruleLine.indexOf(",");
   if (firstCommaIndex < 0) return null;
@@ -1913,7 +1827,7 @@ function getRuleIdentity(ruleLine) {
   return ruleLine.substring(0, secondCommaIndex);
 }
 
-// 按规则标识（TYPE,value）首次出现即保留，丢弃后续同标识行，解决跨段重复。
+// 按 TYPE,value 去重，保留首次。
 function dedupeRulesByIdentity(ruleLines) {
   var deduped = [];
   var seen = {};
@@ -1930,17 +1844,14 @@ function dedupeRulesByIdentity(ruleLines) {
   return deduped;
 }
 
-// 全局拦截 QUIC（UDP:443）。可由 USER_OPTIONS.rejectQuic=false 关闭。
-// 运营商可借 QUIC 流量特征识别代理 / VPN；拦截后客户端回退到 TCP+TLS。
-// 置于规则链最前端，对所有出口（含 DIRECT）生效。
+// 拦截 QUIC（UDP:443）；rejectQuic=false 关闭。
 function buildQuicRejectRules() {
   if (!shouldRejectQuic()) return [];
   return ["AND,((NETWORK,udp),(DST-PORT,443)),REJECT"];
 }
 
-// 拼接所有管理规则。顺序即优先级：
-// QUIC 拦截 → 显式域名 → 媒体 → DoH → 直连 → CN → 进程 → GFW → MATCH。
-// 进程在 GFW 之前：AI/浏览器访问未维护但被 gfw 收录的域时，仍走严管面板，避免漏到机房默认组。
+// 规则链：QUIC → 严管域 → 媒体 → DoH → 直连 → CN → 进程 → GFW → MATCH。
+// 进程在 GFW 前，避免 AI 漏到机房默认组。
 function buildManagedRules(derived, routingTargets) {
   var concatenated = buildQuicRejectRules()
     .concat(buildResidentialDomainRules(derived))
@@ -2284,7 +2195,7 @@ function validateManagedRouting(config, routingTargets, derived) {
 }
 
 // ===========================================================================
-// 7. 路由校验
+// 6. 路由校验
 // ===========================================================================
 
 function buildRoutingValidationTargets(derived) {
@@ -2318,8 +2229,7 @@ function buildProcessValidationTargets(processNames) {
   return buildValidationTargets("PROCESS-NAME", processNames);
 }
 
-// 家宽出口入口。装配顺序：容器 →（可选）出口节点 → 路由目标 → 规则 → 校验。
-// 无任何家宽出口时降级：不注入节点，家宽组改挂地区测速/DIRECT。
+// 家宽出口主流程：容器 → 节点 → 路由 → 规则 → 校验。
 function applyResidentialExit(config, derived, residentialExits) {
   var routingTargets;
 
@@ -2334,10 +2244,10 @@ function applyResidentialExit(config, derived, residentialExits) {
 }
 
 // ===========================================================================
-// 8. 一体化覆写入口（合并版）
+// 7. 覆写入口
 // ===========================================================================
 
-// 文档/模板占位符，避免未改配置时被当成有效凭证静默注入。
+// 文档占位符：未改配置时不得静默注入。
 var RESIDENTIAL_CREDENTIAL_PLACEHOLDERS = {
   username: ["你的用户名", "changeme", "example"],
   password: ["你的密码", "changeme", "example"],
@@ -2358,42 +2268,48 @@ function isValidProxyPort(port) {
   return typeof port === "number" && port > 0 && port < 65536;
 }
 
-// 读取顶层共用认证（transit / homeStatic 共用）。
+// 共用认证：顶层优先，空则回退端点内嵌（兼容旧配置）。
 function getSharedResidentialAuth(credentials) {
-  return {
-    username:
-      credentials && typeof credentials.username === "string"
-        ? credentials.username
-        : "",
-    password:
-      credentials && typeof credentials.password === "string"
-        ? credentials.password
-        : "",
-  };
+  var username =
+    credentials && typeof credentials.username === "string" ? credentials.username : "";
+  var password =
+    credentials && typeof credentials.password === "string" ? credentials.password : "";
+  if (username === "" || password === "") {
+    var nestedSources = [];
+    if (credentials && credentials.transit) nestedSources.push(credentials.transit);
+    if (credentials && credentials.homeStatic) nestedSources.push(credentials.homeStatic);
+    for (var i = 0; i < nestedSources.length; i++) {
+      var nested = nestedSources[i];
+      if (
+        nested &&
+        typeof nested.username === "string" &&
+        nested.username !== "" &&
+        typeof nested.password === "string" &&
+        nested.password !== ""
+      ) {
+        if (username === "") username = nested.username;
+        if (password === "") password = nested.password;
+        break;
+      }
+    }
+  }
+  return { username: username, password: password };
 }
 
-// 校验共用用户名密码。requireAuth=true 时必填（官方中转）；false 时允许空（静态IP）。
+// requireAuth=true：官方中转必填；false：静态IP 可空。
 function hasValidSharedResidentialAuth(credentials, requireAuth) {
   var auth = getSharedResidentialAuth(credentials);
-  if (requireAuth) {
-    if (auth.username === "" || auth.password === "") return false;
-  }
-  if (
-    auth.username !== "" &&
-    isResidentialCredentialPlaceholder("username", auth.username)
-  ) {
+  if (requireAuth && (auth.username === "" || auth.password === "")) return false;
+  if (auth.username !== "" && isResidentialCredentialPlaceholder("username", auth.username)) {
     return false;
   }
-  if (
-    auth.password !== "" &&
-    isResidentialCredentialPlaceholder("password", auth.password)
-  ) {
+  if (auth.password !== "" && isResidentialCredentialPlaceholder("password", auth.password)) {
     return false;
   }
   return true;
 }
 
-// 校验出口端点仅含 server/port。allowLocalhost=true 时允许 localhost。
+// 端点仅校验 server/port；allowLocalhost 时放行 localhost。
 function hasConfiguredEndpointServer(endpoint, allowLocalhost) {
   if (
     !endpoint ||
@@ -2412,7 +2328,7 @@ function hasConfiguredEndpointServer(endpoint, allowLocalhost) {
   return true;
 }
 
-// 官方中转 SOCKS5：transit.server/port + 顶层共用 username/password（必填）。
+// 官方中转：server/port + 共用认证（必填）。
 function hasConfiguredTransitCredentials(credentials) {
   return (
     !!credentials &&
@@ -2421,7 +2337,7 @@ function hasConfiguredTransitCredentials(credentials) {
   );
 }
 
-// 静态IP SOCKS5：homeStatic.server/port；共用认证可选；允许 localhost。
+// 静态IP：server/port；认证可选；允许 localhost。
 function hasConfiguredHomeStaticCredentials(credentials) {
   return (
     !!credentials &&
@@ -2430,7 +2346,6 @@ function hasConfiguredHomeStaticCredentials(credentials) {
   );
 }
 
-// 任一出口配置齐全即视为已配置家宽。
 function hasConfiguredResidentialCredentials(credentials) {
   return (
     hasConfiguredTransitCredentials(credentials) ||
@@ -2438,7 +2353,6 @@ function hasConfiguredResidentialCredentials(credentials) {
   );
 }
 
-// 合并端点 server/port 与顶层共用认证，供节点注入使用。
 function cloneEndpointCredentials(endpoint, sharedAuth) {
   var auth = sharedAuth || { username: "", password: "" };
   return {
@@ -2454,7 +2368,6 @@ function normalizeOverrideMode(mode) {
   if (typeof mode !== "string") {
     throw createUserError("USER_OPTIONS.overrideMode 必须是字符串");
   }
-
   var normalizedMode = mode.toLowerCase();
   if (
     normalizedMode === "merged" ||
@@ -2473,21 +2386,16 @@ function normalizeOverrideMode(mode) {
   ) {
     return "dns-sniffer-only";
   }
-
   throw createUserError(
-    "未知 USER_OPTIONS.overrideMode: " +
-      mode +
-      "，可选 merged / dns-sniffer-only",
+    "未知 USER_OPTIONS.overrideMode: " + mode + "，可选 merged / dns-sniffer-only",
   );
 }
 
 function shouldApplyOnlyDnsAndSniffer() {
-  return (
-    normalizeOverrideMode(USER_OPTIONS.overrideMode) === "dns-sniffer-only"
-  );
+  return normalizeOverrideMode(USER_OPTIONS.overrideMode) === "dns-sniffer-only";
 }
 
-// 解析可选家宽出口：官方中转与/或静态IP；都没有则空对象（降级）。
+// 解析家宽出口；都未配置则降级为空。
 function resolveResidentialExits(credentials) {
   var sharedAuth = getSharedResidentialAuth(credentials);
   return {
@@ -2502,12 +2410,8 @@ function resolveResidentialExits(credentials) {
 
 function main(config) {
   if (USER_OPTIONS.enabled === false) return config;
-
   DNS_SNIFFER_MODULE.apply(config);
-  if (shouldApplyOnlyDnsAndSniffer()) {
-    return config;
-  }
-
+  if (shouldApplyOnlyDnsAndSniffer()) return config;
   return applyResidentialExit(
     config,
     DNS_SNIFFER_MODULE.DERIVED,
