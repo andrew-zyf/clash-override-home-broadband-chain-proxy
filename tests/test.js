@@ -63,7 +63,7 @@ function baseConfig() {
       { name: "🇺🇸 US Auto 01", type: "ss" },
       { name: "🇯🇵 JP Auto 01", type: "ss" },
       { name: "🇰🇷 KR Auto 01", type: "ss" },
-      { name: "🇹🇼 TW Auto 01", type: "ss" },
+      { name: "🌸 TW Auto 01", type: "ss" },
     ],
     "proxy-groups": [
       { name: "PROXY", type: "select", proxies: ["🇸🇬 SG Auto 01"] },
@@ -255,7 +255,7 @@ function testNormalizeOverrideMode() {
 }
 
 function testVersionMarker() {
-  assert(overrideCode.includes("// @version 14.41"));
+  assert(overrideCode.includes("// @version 14.42"));
   const lines = overrideCode.split("\n").filter((l) => l.includes("@version "));
   assert.strictEqual(lines.length, 1);
 }
@@ -266,7 +266,7 @@ function testUiGroupNames() {
   assert.strictEqual(S.UI_GROUPS.support, "az.严管调度.🔑 登录旁路");
   assert.strictEqual(S.UI_GROUPS.integrations, "az.严管调度.💳 支付验证");
   assert.strictEqual(S.UI_GROUPS.otherExit, "az.其他调度.🌏 解锁出口");
-  assert.strictEqual(S.BASE.residentialGroupName, "az.其他测速.🏠 家宽节点组");
+  assert.strictEqual(S.BASE.residentialGroupName, "az.其他测速.🏠 家宽");
   assert.strictEqual(S.BASE.residentialFlag, "🏠");
   assert.notStrictEqual(S.UI_GROUPS.strictExit, S.UI_GROUPS.otherExit);
 }
@@ -1075,9 +1075,10 @@ function testRegionDetection() {
   const asia = runMain((config) => {
     config.proxies = [
       { name: "Korea Seoul 01", type: "ss" },
-      { name: "Taiwan Taipei", type: "ss" },
+      { name: "Taiwan Node 01", type: "ss" },
       { name: "🇰🇷 KR Auto 02", type: "ss" },
-      { name: "🇹🇼 TW Auto 02", type: "ss" },
+      { name: "🌸 TW Auto 02", type: "ss" },
+      { name: "台湾 01", type: "ss" },
     ];
     config["proxy-groups"] = [
       { name: "PROXY", type: "select", proxies: ["Korea Seoul 01"] },
@@ -1087,14 +1088,10 @@ function testRegionDetection() {
   assert(findGroup(asia.output, regionGroup(asia.sandbox, "KR")));
   assert(findGroup(asia.output, regionGroup(asia.sandbox, "TW")));
   assert.strictEqual(asia.sandbox.BASE.regions.TW.flag, "🌸");
-  assert.strictEqual(asia.sandbox.BASE.regions.TW.label, "中华台北");
+  assert.strictEqual(asia.sandbox.BASE.regions.TW.label, "台湾");
   assert.strictEqual(
     regionGroup(asia.sandbox, "TW"),
-    "az.分区测速.🌸 中华台北节点组",
-  );
-  assert.strictEqual(
-    findGroup(asia.output, "az.分区测速.🇹🇼 台湾节点组"),
-    undefined,
+    "az.分区测速.🌸 台湾节点组",
   );
 
   const compact = runMain((config) => {

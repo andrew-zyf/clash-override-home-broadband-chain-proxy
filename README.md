@@ -2,13 +2,13 @@
 
 Clash 覆写脚本（ES5）。把 AI / OAuth / 支付绑到 **防封出口**，媒体与社交绑到 **解锁出口**，降低机房 IP 与出口不一致带来的封号风险。
 
-**版本：** v14.41 · 脚本 [`src/residential-exit-override.js`](src/residential-exit-override.js)
+**版本：** v14.42 · 脚本 [`src/residential-exit-override.js`](src/residential-exit-override.js)
 
 ## 快速开始
 
 1. 填写脚本顶部的 `USER_OPTIONS` 与 `RESIDENTIAL_CREDENTIALS`（勿留占位符）
 2. 在 Clash Verge / 兼容客户端覆写页导入并启用
-3. 使用规则模式 + TUN；日常把防封出口选到 🏠 家宽节点组
+3. 使用规则模式 + TUN；日常把防封出口选到 🏠 家宽
 
 ```javascript
 var USER_OPTIONS = {
@@ -45,15 +45,15 @@ var RESIDENTIAL_CREDENTIALS = {
 | `az.严管调度.💳 支付验证` | → 防封出口 | 支付 / feature flag |
 | `az.其他调度.🌏 解锁出口` | 同防封候选 | 媒体 / 社交总闸 |
 | `az.其他调度.🎬 / 🎵 / 🌐 / 💬` | → 解锁出口 | 与防封解耦 |
-| `az.分区测速.🇺🇸🇸🇬🇯🇵🇰🇷🌸🇭🇰` | url-test | 订阅地区节点；台湾为 🌸 中华台北 |
-| `az.其他测速.🏠 家宽节点组` | 官方中转 → 静态IP | 家宽实体；默认优选中转 |
+| `az.分区测速.🇺🇸🇸🇬🇯🇵🇰🇷🌸🇭🇰` | url-test | 美国 / 新加坡 / 日本 / 韩国 / 台湾 / 香港 |
+| `az.其他测速.🏠 家宽` | 官方中转 → 静态IP | 家宽实体；默认优选中转 |
 
 节点名：`🏠 家宽出口（官方中转）` / `🏠 家宽出口（静态IP）`。
 
 ### 总闸优选序
 
 ```
-🇺🇸 → 🏠 家宽节点组 → 🇸🇬 → 🇯🇵 → 🇰🇷 → 🌸 → 🇭🇰
+🇺🇸美国 → 🏠家宽 → 🇸🇬新加坡 → 🇯🇵日本 → 🇰🇷韩国 → 🌸台湾 → 🇭🇰香港
 ```
 
 无美区时，家宽排在最前。防封请手动选 🏠 家宽（或其内的中转 / 静态IP）。
@@ -83,7 +83,7 @@ QUIC 拦截（可选）
 ```mermaid
 flowchart LR
   A[AI / OAuth / 支付] --> B[🏠 防封出口]
-  B --> C[🇺🇸 → 🏠家宽 → 分区…]
+  B --> C[🇺🇸美国 → 🏠家宽 → …]
   D[视频 / 社交 / IM] --> E[🌏 解锁出口]
   E --> C
   F[CN / 局域网] --> G[DIRECT]

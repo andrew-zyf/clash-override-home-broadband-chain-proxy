@@ -1,6 +1,6 @@
 // 家宽出口覆写 — Clash Verge / Clash Party 单文件脚本（ES5）
 // 填写下方 USER_OPTIONS / RESIDENTIAL_CREDENTIALS 后导入覆写页启用。
-// @version 14.41
+// @version 14.42
 
 // ===========================================================================
 // 用户配置
@@ -1249,17 +1249,16 @@ var DNS_SNIFFER_MODULE = (function () {
 
 // 运行期常量：地区、节点名、组名、合法代理类型。
 var BASE = {
-  // 分区顺序；总闸插入家宽后：🇺🇸 → 🏠 → 🇸🇬 → 🇯🇵 → 🇰🇷 → 🌸 → 🇭🇰
+  // 总闸优选：🇺🇸美国 → 🏠家宽 → 🇸🇬新加坡 → 🇯🇵日本 → 🇰🇷韩国 → 🌸台湾 → 🇭🇰香港
   regionPreferenceOrder: ["US", "SG", "JP", "KR", "TW", "HK"],
   regions: {
     US: { regex: /🇺🇸|美国|United\s*States|^US(?:[|丨\-_ ]|\d)/i, label: "美国", flag: "🇺🇸" },
     SG: { regex: /🇸🇬|新加坡|Singapore|^SG(?:[|丨\-_ ]|\d)/i, label: "新加坡", flag: "🇸🇬" },
     JP: { regex: /🇯🇵|日本|Japan|^JP(?:[|丨\-_ ]|\d)/i, label: "日本", flag: "🇯🇵" },
     KR: { regex: /🇰🇷|韩国|韓國|Korea|^KR(?:[|丨\-_ ]|\d)/i, label: "韩国", flag: "🇰🇷" },
-    // 不用 🇹🇼；🌸=中华台北
     TW: {
-      regex: /🌸|🇹🇼|中华台北|中華台北|Chinese\s*Taipei|\bTPE\b|台湾|台灣|Taiwan|^TW(?:[|丨\-_ ]|\d)/i,
-      label: "中华台北", flag: "🌸",
+      regex: /🌸|台湾|台灣|Taiwan|^TW(?:[|丨\-_ ]|\d)/i,
+      label: "台湾", flag: "🌸",
     },
     HK: { regex: /🇭🇰|香港|Hong\s*Kong|^HK(?:[|丨\-_ ]|\d)/i, label: "香港", flag: "🇭🇰" },
   },
@@ -1275,7 +1274,7 @@ var BASE = {
   residentialProxyNameKeyword: "家宽出口",
   groupNameSuffixes: { base: "节点组" },
   groupNamePrefixes: { base: "az.分区测速." },
-  residentialGroupName: "az.其他测速.🏠 家宽节点组",
+  residentialGroupName: "az.其他测速.🏠 家宽",
   validProxyTypes: [
     "http", "https", "socks5", "ss", "ssr", "vmess",
     "trojan", "vless", "hysteria", "tuic", "snell", "wireguard",
@@ -1560,15 +1559,10 @@ function writeRegionGroup(config, region, groupNameSuffix) {
   var groupName = buildRegionGroupName(regionMeta, groupNameSuffix);
   var proxyGroups = config["proxy-groups"];
 
-  // 台湾组更名：清掉中华民国旗旧组（无论本轮是否仍有 TW 节点）。
-  if (regionMeta.code === "TW") {
-    removeNamedProxyGroup(config, "az.分区测速.🇹🇼 台湾节点组");
-  }
-
   var regionNodeNames = collectRegionNodeNames(config.proxies, regionRegex);
   if (regionNodeNames.length === 0) return null;
 
-  upsertRegionUrlTestGroup(proxyGroups, groupName, regionNodeNames); // 用订阅地区节点创建或修正目标组
+  upsertRegionUrlTestGroup(proxyGroups, groupName, regionNodeNames);
 
   return groupName;
 }
@@ -1585,6 +1579,7 @@ function writeResidentialGroup(config, memberProxies) {
   var residentialGroupName = BASE.residentialGroupName;
   removeNamedProxyGroup(config, "az.核心出口.🏠 家宽出口");
   removeNamedProxyGroup(config, "az.其他测速.家宽节点组");
+  removeNamedProxyGroup(config, "az.其他测速.🏠 家宽节点组");
 
   upsertNamedItem(config["proxy-groups"], {
     name: residentialGroupName,
@@ -1627,7 +1622,7 @@ function listRegionalExitChoices(regionalTargets) {
   return regionOrder;
 }
 
-// 总闸候选：🇺🇸 → 🏠家宽 → 🇸🇬 → 🇯🇵 → 🇰🇷 → 🌸 → 🇭🇰
+// 总闸候选：🇺🇸美国 → 🏠家宽 → 🇸🇬新加坡 → 🇯🇵日本 → 🇰🇷韩国 → 🌸台湾 → 🇭🇰香港
 function buildRegionAndResidentialExitChoices(residentialTarget, regionalTargets) {
   var targets = regionalTargets || {};
   var order = BASE.regionPreferenceOrder;
