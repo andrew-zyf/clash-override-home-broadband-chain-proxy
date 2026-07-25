@@ -4,7 +4,7 @@
 // 请在下面的 RESIDENTIAL_CREDENTIALS 和 USER_OPTIONS 中填写你的配置。
 // 兼容性：Clash Verge / Clash Party 的 JavaScriptCore；只用 ES5 语法。
 //
-// @version 14.19
+// @version 14.23
 
 // ===========================================================================
 // 用户配置
@@ -185,7 +185,7 @@ var DNS_SNIFFER_MODULE = (function () {
         "+.microsoftonline.com",
         "+.msftauth.net",
         "+.msauth.net",
-        "+.msecnd.net",
+        // 不含 msecnd.net：微软通用 CDN 过宽，会把大量非登录流量绑进家宽。
         "+.login.live.com",
         "+.login.microsoft.com",
         "+.account.microsoft.com",
@@ -193,7 +193,6 @@ var DNS_SNIFFER_MODULE = (function () {
       microsoft_developer: [
         "+.visualstudio.com",
         "+.vsassets.io",
-        "+.vsmarketplacebadges.dev",
       ], // Microsoft 开发者与 VS Code 生态基础设施
       developer_git_hosts: [
         "+.github.com",
@@ -211,8 +210,7 @@ var DNS_SNIFFER_MODULE = (function () {
         "+.pythonhosted.org", // PyPI 包文件 CDN
         "+.crates.io", // Rust
         "+.rubygems.org", // Ruby
-        "+.docker.com", // Docker Hub
-        "+.docker.io",
+        "+.docker.io", // Docker registry（docker.com 营销站不绑严管）
       ],
       developer_deployment: [
         "+.vercel.com",
@@ -228,24 +226,8 @@ var DNS_SNIFFER_MODULE = (function () {
         "+.onrender.com",
         "+.railway.app",
       ],
-      developer_tools: ["+.jetbrains.com", "+.jetbrains.space"],
-      developer_docs_and_qa: [
-        "+.stackoverflow.com",
-        "+.sstatic.net", // Stack Exchange 静态资源
-        "+.mozilla.org", // 含 developer.mozilla.org / MDN
-        "+.readthedocs.io",
-        "+.readthedocs.org",
-        "+.gitbook.io",
-        "+.gitbook.com",
-      ],
-      developer_productivity: [
-        "+.notion.so", // Notion 协作知识库
-        "+.notion.com",
-        "+.linear.app", // Linear 项目管理
-        "+.figma.com", // Figma 设计协作
-        "+.figstatic.com", // Figma 静态资源
-      ],
-      // 用这些站验证「严管/家宽」是否生效；勿再 DIRECT（否则永远显示本机 IP）。
+      // JetBrains / 文档站 / Notion / Figma 不进严管：日常浏览落到 GFW/MATCH。
+      // 用出口检测站验证「严管/家宽」是否生效；勿再 DIRECT（否则永远显示本机 IP）。
       egress_check: [
         "+.ping0.cc",
         "+.ipinfo.io",
@@ -259,7 +241,6 @@ var DNS_SNIFFER_MODULE = (function () {
         "+.claude.com",
         "+.anthropic.com",
         "+.claudeusercontent.com",
-        "+.clau.de", // Anthropic 官方场景使用过的短链
       ],
       openai: [
         "+.openai.com",
@@ -267,19 +248,13 @@ var DNS_SNIFFER_MODULE = (function () {
         "+.chat.com",
         "+.sora.com",
         "+.crixet.com",
-        "+.oaiusercontent.com", // OpenAI 官方静态资源与内容分发基础设施
+        "+.oaiusercontent.com", // OpenAI 官方静态资源
         "+.oaistatic.com",
-        "+.openai.com.cdn.cloudflare.net",
-        "+.openaiapi-site.azureedge.net",
-        "+.openaicom-api-bdcpf8c6d2e9atf6.z01.azurefd.net",
+        // azureedge / azurefd / cdn.cloudflare 由 CDN.cloud 覆盖，不再为单租户主机重复挂规则。
         "+.openaicom.imgix.net",
         "+.openaicomproductionae4b.blob.core.windows.net",
-        "+.production-openaicom-storage.azureedge.net",
         "+.chatgpt.livekit.cloud",
-        "+.host.livekit.cloud",
-        "+.challenges.cloudflare.com",
-        "+.events.statsigapi.net",
-        "+.o33249.ingest.sentry.io",
+        "+.challenges.cloudflare.com", // Turnstile；非整树 cloudflare.com
       ],
       google_ai: [
         "+.gemini.google.com",
@@ -289,7 +264,6 @@ var DNS_SNIFFER_MODULE = (function () {
         "+.generativelanguage.googleapis.com",
         "+.ai.google",
         "+.notebooklm.google",
-        "+.makersuite.google.com", // 历史兼容入口，Google 已迁移到 AI Studio
         "+.deepmind.google",
         "+.labs.google",
       ],
@@ -334,32 +308,11 @@ var DNS_SNIFFER_MODULE = (function () {
       civitai: [
         "+.civitai.com", // SD 模型与社区
       ],
-      ai_search: [
-        "+.you.com", // You.com / YouChat
-        "+.phind.com", // Phind 编程搜索
-        "+.kagi.com", // Kagi 付费搜索
-      ],
-      character_and_companion: [
-        "+.character.ai",
-        "+.pi.ai", // Inflection / Pi
-      ],
-      writing_and_translation: [
-        "+.grammarly.com", // Grammarly AI 写作助手
-        "+.grammarly.io",
-        "+.deepl.com", // DeepL AI 翻译
-      ],
-      ai_creative_tools: [
-        "+.suno.ai", // AI 音乐生成
-        "+.udio.com", // Udio AI 音乐
-        "+.leonardo.ai", // AI 图像生成
-        "+.descript.com", // AI 视频/音频编辑
-      ],
+      // 通用搜索 / 角色陪聊 / 写作翻译 / 消费级创作站不进严管：
+      // 出口 IP 敏感度低，绑家宽只会烧流量；落到 GFW/MATCH 或进程兜底即可。
       ai_platforms: [
-        "+.poe.com", // Quora Poe AI 平台
         "+.cohere.com", // Cohere 企业 AI API
         "+.replit.com", // Replit AI 编程平台
-        "+.jasper.ai", // Jasper AI 写作
-        "+.gamma.app", // Gamma AI 演示文稿
       ],
       ai_coding: [
         "+.codeium.com", // Windsurf AI IDE
@@ -389,16 +342,12 @@ var DNS_SNIFFER_MODULE = (function () {
         "+.stripe.com", // Claude Pro / ChatGPT Plus / Perplexity Pro 主要结算入口
         "+.stripe.network",
       ],
-      customer_engagement: [
-        "+.intercom.io", // Intercom 客服（Anthropic / OpenAI 等使用）
-        "+.intercomcdn.com",
-      ],
+      // Intercom / PostHog 等客服与产品分析不进严管：不参与登录/支付指纹，落到 GFW/MATCH。
       telemetry: [
         "+.statsig.com", // Claude Code / Claude.ai / ChatGPT 的 feature flag
         "+.statsigapi.net",
         "+.featuregates.org",
         "+.featureassets.org",
-        "+.posthog.com", // PostHog（Claude.ai 等）
       ],
     },
     // challenges.cloudflare.com 已在 ai.openai；不再整域绑 cloudflare.com。
@@ -488,8 +437,8 @@ var DNS_SNIFFER_MODULE = (function () {
       core: ["+.dns.google", "+.cloudflare-dns.com", "+.quad9.net"],
     },
     cloud: {
-      // 仅基础设施后缀。消费站 / 租户平台（amazon.com、pages.dev、workers.dev）
-      // 不进支撑面板，避免开箱把购物与任意 CF Pages 绑进家宽。
+      // 仅大厂基础设施后缀。消费站 / 租户平台（amazon.com、pages.dev、workers.dev）
+      // 与通用 SaaS CDN（jsDelivr / Bunny / Cloudinary）不进支撑，避免过宽绑家宽。
       cloudflare: ["+.cdn.cloudflare.net"],
       aws: [
         "+.amazonaws.com",
@@ -506,14 +455,6 @@ var DNS_SNIFFER_MODULE = (function () {
         "+.edgesuite.net",
       ],
       azure_cdn: ["+.azureedge.net", "+.azurefd.net"],
-      jsdelivr: ["+.jsdelivr.net"],
-      bunny: [
-        "+.bunnycdn.com",
-        "+.b-cdn.net", // BunnyCDN 客户加速域
-      ],
-      cloudinary: [
-        "+.cloudinary.com", // 图片 / 视频 SaaS CDN
-      ],
     },
   };
 
@@ -552,27 +493,11 @@ var DNS_SNIFFER_MODULE = (function () {
         "+.max.com",
         "+.hbomax.com",
         "+.hbomaxcdn.com",
-        "+.hbonow.com",
-        "+.maxgo.com",
       ],
-      peacock: [
-        "+.peacocktv.com", // NBCUniversal Peacock
-      ],
-      paramount_plus: [
-        "+.paramountplus.com",
-        "+.cbsivideo.com", // 旧 CBS All Access 残留 CDN
-        "+.paramount.com",
-      ],
-      crunchyroll: [
-        "+.crunchyroll.com", // 动漫流媒体
-        "+.cr-bundles.com",
-      ],
-      vimeo: ["+.vimeo.com", "+.vimeocdn.com"],
-      dailymotion: ["+.dailymotion.com", "+.dmcdn.net"],
-      hulu: ["+.hulu.com", "+.hulustream.com", "+.huluim.com"],
+      // Peacock / Paramount / Crunchyroll / Hulu / Vimeo / Dailymotion 不显式维护：长尾，落到 GFW/MATCH。
       prime_video: [
         "+.primevideo.com",
-        "+.aiv-cdn.net", // Prime Video CDN（与 amazon.com 主站解耦；主站也不再进 CDN.cloud）
+        "+.aiv-cdn.net", // Prime Video CDN（与 amazon.com 主站解耦）
         "+.aiv-delivery.net",
       ],
       twitch: ["+.twitch.tv", "+.ttvnw.net", "+.jtvnw.net"],
@@ -588,7 +513,7 @@ var DNS_SNIFFER_MODULE = (function () {
         "+.soundcloud.com",
         "+.sndcdn.com", // SoundCloud CDN
       ],
-      bandcamp: ["+.bandcamp.com"],
+      // Bandcamp 不显式维护。
     },
     social: {
       // ---- 社交 ----
@@ -610,15 +535,7 @@ var DNS_SNIFFER_MODULE = (function () {
         "+.tiktokv.com",
         "+.ibyteimg.com",
       ],
-      snapchat: ["+.snapchat.com", "+.snap.com", "+.sc-cdn.net"],
-      pinterest: ["+.pinterest.com", "+.pinimg.com"],
-      bluesky: ["+.bsky.app", "+.bsky.social"],
-      tumblr: ["+.tumblr.com", "+.tumblr.media"],
-      long_form_writing: ["+.medium.com", "+.substack.com", "+.patreon.com"],
-      niche_communities: [
-        "+.goodreads.com", // 读书
-        "+.letterboxd.com", // 电影日记
-      ],
+      // Snapchat / Pinterest / Bluesky / Tumblr / Medium / Substack / Patreon 不显式维护。
       linkedin: [
         "+.linkedin.com", // LinkedIn 职业社交
         "+.licdn.com", // LinkedIn CDN
@@ -652,10 +569,7 @@ var DNS_SNIFFER_MODULE = (function () {
         "+.slack-edge.com",
         "+.slack-imgs.com",
       ],
-      zoom: [
-        "+.zoom.us", // Zoom 视频会议
-        "+.zoomgov.com",
-      ],
+      // Zoom 会议不进其他调度：企业场景常需稳定直连/默认组，避免被媒体出口拖垮。
     },
   };
 
@@ -900,7 +814,7 @@ var DNS_SNIFFER_MODULE = (function () {
         "claude.ai",
         "chatgpt.com",
         "chat.com",
-        "openaiapi-site.azureedge.net",
+        "azureedge.net", // OpenAI Azure CDN 由 CDN.cloud 覆盖进支撑
         "chatgpt.livekit.cloud",
         "challenges.cloudflare.com",
         "gemini.google.com",
@@ -922,11 +836,8 @@ var DNS_SNIFFER_MODULE = (function () {
         "ipinfo.io", // 出口检测改走支撑/严管，用于验证家宽
         "githubusercontent.com", // GitHub 原始内容，GFW 下易污染
         "npmjs.org", // npm 官方 registry
-        "poe.com", // Quora Poe AI 平台
-        "grammarly.com", // Grammarly AI 写作
-        "deepl.com", // DeepL AI 翻译
-        "notion.so", // Notion 协作知识库
-        "intercom.io", // Intercom 客服（Anthropic 等使用）
+        "cohere.com",
+        "windsurf.com",
       ],
       processNames: [
         "Claude",
@@ -962,7 +873,6 @@ var DNS_SNIFFER_MODULE = (function () {
         "whatsapp.com", // IM
         "slack.com", // IM（企业即时通讯）
         "linkedin.com", // 社交（职业社交）
-        "zoom.us", // IM（视频会议）
       ],
     },
   };
@@ -1931,12 +1841,13 @@ function buildDegradedResidentialMembers(regionalTargets) {
 
 // UI 面板代理组名常量。
 var UI_GROUPS = {
-  // 严管三组共用的实际出口选择器；改这一处即可统一 AI/支撑/集成出口 IP。
-  // 防封号：请保持首选「家宽出口」。改成美区/机房测速组 = 整包变 DC IP，前面域名工作归零。
+  // 严管三组共用；默认美区优先。防封号请手动切到家宽出口。
   strictExit: "az.严管调度.🎯 统一出口",
   ai: "az.严管调度.🤖 AI 高敏阵列",
   support: "az.严管调度.🛠️ 支撑平台",
   integrations: "az.严管调度.🛡️ 生态域集成",
+  // 其他调度四组共用；与严管统一出口分离，改媒体出口不影响 AI。
+  otherExit: "az.其他调度.🎯 统一出口",
   video: "az.其他调度.🎬 视频流媒体",
   music: "az.其他调度.🎵 音乐播客",
   social: "az.其他调度.🌐 社交长文",
@@ -1944,10 +1855,8 @@ var UI_GROUPS = {
 };
 
 // 写入 UI 面板策略组。
-// 严管：统一出口把家宽实体节点扁平挂在最前（避免只嵌套「家宽出口」组时 UI 里节点像消失），
-// 再挂家宽组与地区组；三分类面板只挂统一出口。
-// 防封号场景请勿把统一出口改成美区/机房节点组。
-// 其他调度（媒体）：仍美区优先，并挂统一出口便于一键跟严管同出口。
+// 严管 / 其他 各有独立「统一出口」，互不影响；两者默认均为美区优先。
+// 候选：US → JP → SG → HK → 家宽实体节点 → 家宽组；分类面板只挂各自统一出口。
 function writeExpandedProxyGroups(
   config,
   residentialTarget,
@@ -1964,28 +1873,25 @@ function writeExpandedProxyGroups(
     if (target) regionOrder.push(target);
   }
 
-  // 严管：实体家宽节点 → 家宽组 → 地区
-  // 其他调度：地区 → 统一出口 → 实体家宽 → 家宽组（默认仍美区优先）
-  var strictChoices = uniqueStrings(
-    exitNames.concat([residentialTarget]).concat(regionOrder),
+  // 两套统一出口同一候选序：美区优先，家宽仍可选（防封号时手动切回家宽）。
+  var unifiedChoices = uniqueStrings(
+    regionOrder.concat(exitNames).concat([residentialTarget]),
   );
-  var mediaChoices = uniqueStrings(
-    regionOrder
-      .concat([UI_GROUPS.strictExit])
-      .concat(exitNames)
-      .concat([residentialTarget]),
-  );
+  var strictChoices = unifiedChoices;
+  var otherChoices = unifiedChoices.slice();
   var strictOnly = [UI_GROUPS.strictExit];
+  var otherOnly = [UI_GROUPS.otherExit];
 
   var subgroups = [
     { name: UI_GROUPS.strictExit, type: "select", proxies: strictChoices },
     { name: UI_GROUPS.ai, type: "select", proxies: strictOnly },
     { name: UI_GROUPS.support, type: "select", proxies: strictOnly },
     { name: UI_GROUPS.integrations, type: "select", proxies: strictOnly },
-    { name: UI_GROUPS.video, type: "select", proxies: mediaChoices },
-    { name: UI_GROUPS.music, type: "select", proxies: mediaChoices },
-    { name: UI_GROUPS.social, type: "select", proxies: mediaChoices },
-    { name: UI_GROUPS.im, type: "select", proxies: mediaChoices },
+    { name: UI_GROUPS.otherExit, type: "select", proxies: otherChoices },
+    { name: UI_GROUPS.video, type: "select", proxies: otherOnly },
+    { name: UI_GROUPS.music, type: "select", proxies: otherOnly },
+    { name: UI_GROUPS.social, type: "select", proxies: otherOnly },
+    { name: UI_GROUPS.im, type: "select", proxies: otherOnly },
   ];
   for (var i = 0; i < subgroups.length; i++) {
     upsertNamedItem(proxyGroups, subgroups[i]);
@@ -2398,41 +2304,48 @@ function assertResidentialGroupShape(config, routingTargets) {
   }
 }
 
-// 严管三分类面板必须只挂统一出口，防止各自选择导致 IP 分裂。
-function assertStrictExitCoupling(config) {
-  var strictExit = findProxyGroupByName(
-    config["proxy-groups"],
-    UI_GROUPS.strictExit,
-  );
-  if (!strictExit || strictExit.type !== "select") {
-    throw createUserError("缺少严管统一出口组: " + UI_GROUPS.strictExit);
+// 分类面板必须只挂对应统一出口，防止各自另选导致 IP 分裂。
+function assertCategoryExitCoupling(config, exitGroupName, categoryNames, label) {
+  var exitGroup = findProxyGroupByName(config["proxy-groups"], exitGroupName);
+  if (!exitGroup || exitGroup.type !== "select") {
+    throw createUserError("缺少" + label + "统一出口组: " + exitGroupName);
   }
-  if (!strictExit.proxies || strictExit.proxies.length === 0) {
-    throw createUserError("严管统一出口默认首选必须是家宽出口");
-  }
-  // 首选须为家宽实体节点或家宽组（扁平挂载后节点排在组前面）。
-  var preferred = strictExit.proxies[0];
-  var residentialPreferred =
-    preferred === BASE.residentialGroupName ||
-    preferred === BASE.nodeNames.homeStatic ||
-    preferred === BASE.nodeNames.transit;
-  if (!residentialPreferred) {
-    throw createUserError("严管统一出口默认首选必须是家宽出口");
+  if (!exitGroup.proxies || exitGroup.proxies.length === 0) {
+    throw createUserError(label + "统一出口候选不能为空");
   }
 
-  var categoryNames = [UI_GROUPS.ai, UI_GROUPS.support, UI_GROUPS.integrations];
   for (var i = 0; i < categoryNames.length; i++) {
     var group = findProxyGroupByName(config["proxy-groups"], categoryNames[i]);
     if (
       !group ||
       group.type !== "select" ||
-      !haveSameStringSet(group.proxies || [], [UI_GROUPS.strictExit])
+      !haveSameStringSet(group.proxies || [], [exitGroupName])
     ) {
       throw createUserError(
-        "严管分类面板必须只挂统一出口: " + categoryNames[i],
+        label + "分类面板必须只挂统一出口: " + categoryNames[i],
       );
     }
   }
+}
+
+// 严管三分类只挂严管统一出口。
+function assertStrictExitCoupling(config) {
+  assertCategoryExitCoupling(
+    config,
+    UI_GROUPS.strictExit,
+    [UI_GROUPS.ai, UI_GROUPS.support, UI_GROUPS.integrations],
+    "严管",
+  );
+}
+
+// 其他调度统一出口与严管分离；四分类只挂其他统一出口。
+function assertOtherExitCoupling(config) {
+  assertCategoryExitCoupling(
+    config,
+    UI_GROUPS.otherExit,
+    [UI_GROUPS.video, UI_GROUPS.music, UI_GROUPS.social, UI_GROUPS.im],
+    "其他调度",
+  );
 }
 
 // 判断两个字符串数组集合相等（无视顺序、不允许重复）。
@@ -2467,6 +2380,7 @@ function validateManagedRouting(config, routingTargets, derived) {
   assertResidentialExitBindings(config, routingTargets);
   assertResidentialGroupShape(config, routingTargets);
   assertStrictExitCoupling(config);
+  assertOtherExitCoupling(config);
 
   var ruleLineLookup = buildStringLookup(config.rules);
   var validationTargets = buildRoutingValidationTargets(derived);

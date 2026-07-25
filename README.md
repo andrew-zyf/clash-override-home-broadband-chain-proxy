@@ -2,7 +2,7 @@
 
 Clash 覆写脚本。通过 `家宽出口（官方中转）` 提供固定家宽出口，把 AI、开发平台、支付验证、遥测等高敏流量集中到可手动切换的调度面板里，降低出口 IP 不一致带来的风控风险。
 
-**当前版本：** v14.19
+**当前版本：** v14.22
 
 ## 快速开始
 
@@ -64,22 +64,24 @@ var RESIDENTIAL_CREDENTIALS = {
 | `az.分区测速.🇸🇬 新加坡节点组` | url-test | 订阅中的新加坡节点 |
 | `az.分区测速.🇭🇰 香港节点组` | url-test | 订阅中的香港节点 |
 | `az.核心出口.🏠 家宽出口` | select | 家庭静态 IP（SOCKS，若配置）→ 官方中转（HTTP，若配置） |
-| `az.严管调度.🎯 统一出口` | select | 严管实际出口选择（改这一处即可；**防封号请保持家宽**） |
-| `az.严管调度.🤖 AI 高敏阵列` | select | AI 域名 / App / CLI / 浏览器 → 只挂统一出口 |
-| `az.严管调度.🛠️ 支撑平台` | select | 开发平台 / CDN 基建 / OAuth 子域 / 出口检测 → 只挂统一出口 |
-| `az.严管调度.🛡️ 生态域集成` | select | Arkose / Stripe / Auth0 / Statsig 等 AI 绑 IP 项 → 只挂统一出口 |
-| `az.其他调度.🎬 视频流媒体` | select | YouTube / Netflix / Disney+ / Hulu / Twitch 等 |
-| `az.其他调度.🎵 音乐播客` | select | Spotify / SoundCloud / Bandcamp |
-| `az.其他调度.🌐 社交长文` | select | X / Facebook / Instagram / Reddit / LinkedIn 等 |
-| `az.其他调度.💬 即时通讯` | select | Telegram / Discord / LINE / WhatsApp / Slack / Zoom 等 |
+| `az.严管调度.🎯 统一出口` | select | 严管实际出口（改这一处即可；默认美区，防封号请手动切家宽） |
+| `az.严管调度.🤖 AI 高敏阵列` | select | AI 域名 / App / CLI / 浏览器 → 只挂严管统一出口 |
+| `az.严管调度.🛠️ 支撑平台` | select | 开发平台 / CDN 基建 / OAuth 子域 / 出口检测 → 只挂严管统一出口 |
+| `az.严管调度.🛡️ 生态域集成` | select | Arkose / Stripe / Auth0 / Statsig 等 → 只挂严管统一出口 |
+| `az.其他调度.🎯 统一出口` | select | 其他调度实际出口（与严管分离；默认美区优先） |
+| `az.其他调度.🎬 视频流媒体` | select | YouTube / Netflix / Disney+ / Max / Twitch / Prime 等 → 只挂其他统一出口 |
+| `az.其他调度.🎵 音乐播客` | select | Spotify / SoundCloud → 只挂其他统一出口 |
+| `az.其他调度.🌐 社交长文` | select | X / Meta / Reddit / TikTok / LinkedIn 等 → 只挂其他统一出口 |
+| `az.其他调度.💬 即时通讯` | select | Telegram / Discord / LINE / WhatsApp / Slack / Signal 等 → 只挂其他统一出口 |
 
 调度组候选顺序：
 
 | 面板类型 | 默认首选 | 候选顺序 |
 |---|---|---|
-| `🎯 统一出口`（严管共用） | 家宽实体节点（若有） | 静态 IP / 中转 → 🏠 家宽组 → 🇺🇸 → 🇯🇵 → 🇸🇬 → 🇭🇰 |
-| AI / 支撑 / 集成 | （固定）统一出口 | 仅 `🎯 统一出口`，不可各自另选 |
-| 其他（视频 / 音乐 / 社交 / IM） | 🇺🇸 美国（若有） | 🇺🇸 → 🇯🇵 → 🇸🇬 → 🇭🇰 → 🎯 统一出口 → 家宽 |
+| `严管.🎯 统一出口` | 🇺🇸 美国（若有） | 🇺🇸 → 🇯🇵 → 🇸🇬 → 🇭🇰 → 家宽 |
+| AI / 支撑 / 集成 | （固定）严管统一出口 | 仅 `严管.🎯 统一出口` |
+| `其他.🎯 统一出口` | 🇺🇸 美国（若有） | 🇺🇸 → 🇯🇵 → 🇸🇬 → 🇭🇰 → 家宽 |
+| 视频 / 音乐 / 社交 / IM | （固定）其他统一出口 | 仅 `其他.🎯 统一出口` |
 
 不存在的地区不会出现。
 
@@ -103,11 +105,11 @@ var RESIDENTIAL_CREDENTIALS = {
 
 - **空/占位凭证降级**：`merged` 下不抛错中断；DNS、规则、严管面板照常写入。官方中转与家庭静态 IP 都未配置时不注入出口节点，家宽组改挂地区测速（或 `DIRECT`）。
 - **家庭静态 IP**：`homeStatic` 注入 SOCKS5 节点「家宽出口（家庭静态 IP）」，算家宽，进入 `🏠 家宽出口`；与官方中转并存时静态 IP 排在前面。
-- **support / integrations 已收窄**：不再整树 `google.com` / `microsoft.com` / `cloudflare.com`；Google 留 OAuth（含 `consent` / `gstatic` / `apis` / `googleusercontent`）登录旁路；集成仅留 Arkose/Stripe/Auth0/Clerk/Statsig/Intercom/PostHog 等。出口检测站（ipinfo 等）走支撑面板以便验证家宽。
-- **严管出口耦合**：AI / 支撑 / 集成三组只挂 `🎯 统一出口`。防封号请保持统一出口首选家宽；改成美区/机房测速组 = AI+支付+验证整包变 DC IP，前面域名工作归零。
+- **support / integrations 已收窄**：不再整树 `google.com` / `microsoft.com` / `cloudflare.com`；Google 留 OAuth 登录旁路；集成仅留 Arkose/Stripe/Auth0/Clerk/Statsig。Intercom/PostHog、文档站、JetBrains、长尾媒体等不进显式清单。
+- **统一出口分域**：`严管.🎯 统一出口` 与 `其他.🎯 统一出口` 相互独立，默认均为美区优先。防封号请在严管统一出口手动切到家宽；改其他统一出口不影响 AI。
 - **进程规则在 CN 之后、GFW 之前**：明确域名与国内直连仍优先；AI / 浏览器进程访问的、被 `gfw` 收录但未显式维护的域名会进严管面板（默认家宽）。Chrome 等未列入的浏览器不受进程规则影响——网页「用 Google 登录」依赖上方 OAuth 旁路域，勿改统一出口。
 - **默认代理组识别**：精确名 `PROXY`/`GLOBAL` → MATCH 目标（若组存在）→ 关键词子串。避免「PROXY备用」类组抢走订阅 MATCH 真主组。
-- **CDN.cloud 不含消费站**：`amazon.com` / `pages.dev` / `workers.dev` 不进支撑面板，落到 GFW/MATCH；`amazonaws.com` / `cloudfront.net` / `cdn.cloudflare.net` 等基础设施仍走支撑。
+- **CDN.cloud 仅大厂基建**：不含消费站与通用 SaaS CDN（jsDelivr / Bunny / Cloudinary）；OpenAI 的 azureedge / cdn.cloudflare 主机由父后缀覆盖，不再为单租户重复挂规则。
 - **不再生成 `DOMAIN-KEYWORD`**：一级标签子串曾导致误路由（如 `you` 吸走 YouTube）；现仅维护显式 `DOMAIN-SUFFIX`，边缘子域靠 sniffer `force-domain` 兜底。
 
 ## DNS 与 Sniffer

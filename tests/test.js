@@ -101,8 +101,8 @@ function expectedGroupNames(sandbox) {
   };
 }
 
-// 其他调度：US → JP → SG → HK → 统一出口 → 家宽实体节点 → 家宽组
-function expectedMediaDispatchChoices(output, sandbox) {
+// 两套统一出口同一序：US → JP → SG → HK → 家宽实体节点 → 家宽组
+function expectedUnifiedExitChoices(output, sandbox) {
   const suffix = sandbox.BASE.groupNameSuffixes;
   const choices = [];
   const usGroupName = regionGroupName(sandbox, "US", suffix.base);
@@ -111,7 +111,6 @@ function expectedMediaDispatchChoices(output, sandbox) {
     const groupName = regionGroupName(sandbox, code, suffix.base);
     if (findGroup(output, groupName)) choices.push(groupName);
   }
-  choices.push(sandbox.UI_GROUPS.strictExit);
   if (findProxy(output, sandbox.BASE.nodeNames.homeStatic)) {
     choices.push(sandbox.BASE.nodeNames.homeStatic);
   }
@@ -119,30 +118,16 @@ function expectedMediaDispatchChoices(output, sandbox) {
     choices.push(sandbox.BASE.nodeNames.transit);
   }
   choices.push(sandbox.BASE.residentialGroupName);
-  return choices;
-}
-
-// 严管统一出口：家宽实体节点 → 家宽组 → US → JP → SG → HK
-function expectedStrictDispatchChoices(output, sandbox) {
-  const suffix = sandbox.BASE.groupNameSuffixes;
-  const choices = [];
-  if (findProxy(output, sandbox.BASE.nodeNames.homeStatic)) {
-    choices.push(sandbox.BASE.nodeNames.homeStatic);
-  }
-  if (findProxy(output, sandbox.BASE.nodeNames.transit)) {
-    choices.push(sandbox.BASE.nodeNames.transit);
-  }
-  choices.push(sandbox.BASE.residentialGroupName);
-  const usGroupName = regionGroupName(sandbox, "US", suffix.base);
-  if (findGroup(output, usGroupName)) choices.push(usGroupName);
-  for (const code of ["JP", "SG", "HK"]) {
-    const groupName = regionGroupName(sandbox, code, suffix.base);
-    if (findGroup(output, groupName)) choices.push(groupName);
-  }
   return choices;
 }
 
 function expectedUnifiedExitPreferred(output, sandbox) {
+  const usGroupName = regionGroupName(
+    sandbox,
+    "US",
+    sandbox.BASE.groupNameSuffixes.base,
+  );
+  if (findGroup(output, usGroupName)) return usGroupName;
   if (findProxy(output, sandbox.BASE.nodeNames.homeStatic)) {
     return sandbox.BASE.nodeNames.homeStatic;
   }
@@ -325,7 +310,7 @@ function testNormalizeOverrideMode() {
 
 // ---- script version marker ----
 function testVersionSingleDefinition() {
-  assert(overrideCode.includes("// @version 14.19"), "Expected @version 14.19");
+  assert(overrideCode.includes("// @version 14.23"), "Expected @version 14.23");
   const versionLines = overrideCode.split('\n').filter((l) =>
     l.includes("@version ")
   );
@@ -562,35 +547,48 @@ function assertManagedProxyTopology(output, sandbox) {
 }
 
 function assertManualDispatchGroups(output, sandbox) {
-  const strictChoices = expectedStrictDispatchChoices(output, sandbox);
-  const mediaChoices = expectedMediaDispatchChoices(output, sandbox);
+  const unifiedChoices = expectedUnifiedExitChoices(output, sandbox);
+  const preferred = expectedUnifiedExitPreferred(output, sandbox);
   const strictExit = sandbox.UI_GROUPS.strictExit;
+  const otherExit = sandbox.UI_GROUPS.otherExit;
 
-  const unified = findGroup(output, strictExit);
-  assert(unified, "strict unified exit missing");
-  assert.strictEqual(unified.type, "select");
-  assert.deepEqual(unified.proxies, strictChoices, "unified exit choices mismatch");
+  const strictUnified = findGroup(output, strictExit);
+  assert(strictUnified, "strict unified exit missing");
+  assert.strictEqual(strictUnified.type, "select");
+  assert.deepEqual(strictUnified.proxies, unifiedChoices, "strict exit choices mismatch");
   assert.strictEqual(
-    unified.proxies[0],
-    expectedUnifiedExitPreferred(output, sandbox),
-    "unified exit should prefer residential exit"
+    strictUnified.proxies[0],
+    preferred,
+    "strict exit should prefer US when available"
+  );
+
+  const otherUnified = findGroup(output, otherExit);
+  assert(otherUnified, "other unified exit missing");
+  assert.strictEqual(otherUnified.type, "select");
+  assert.deepEqual(otherUnified.proxies, unifiedChoices, "other exit choices mismatch");
+  assert.strictEqual(
+    otherUnified.proxies[0],
+    preferred,
+    "other exit should prefer US when available"
+  );
+  assert.notStrictEqual(
+    otherExit,
+    strictExit,
+    "other and strict unified exits must be distinct groups"
   );
 
   for (const groupName of strictUiGroupNames(sandbox)) {
     const group = findGroup(output, groupName);
     assert(group, "UI group missing: " + groupName);
     assert.strictEqual(group.type, "select");
-    assert.deepEqual(group.proxies, [strictExit], "strict category must only pin unified exit: " + groupName);
+    assert.deepEqual(group.proxies, [strictExit], "strict category must only pin strict exit: " + groupName);
   }
 
-  const usGroupName = regionGroupName(sandbox, "US", sandbox.BASE.groupNameSuffixes.base);
-  const mediaFirst = findGroup(output, usGroupName) ? usGroupName : sandbox.BASE.residentialGroupName;
   for (const groupName of otherUiGroupNames(sandbox)) {
     const group = findGroup(output, groupName);
     assert(group, "UI group missing: " + groupName);
     assert.strictEqual(group.type, "select");
-    assert.deepEqual(group.proxies, mediaChoices, "media dispatch mismatch: " + groupName);
-    assert.strictEqual(group.proxies[0], mediaFirst, "media dispatch should prefer US first: " + groupName);
+    assert.deepEqual(group.proxies, [otherExit], "other category must only pin other exit: " + groupName);
   }
 }
 
@@ -630,7 +628,23 @@ function assertCoreStrictRouting(output, sandbox) {
     "DOMAIN-SUFFIX,paypal.com," + sandbox.UI_GROUPS.integrations,
     "DOMAIN-SUFFIX,okta.com," + sandbox.UI_GROUPS.integrations,
     "DOMAIN-SUFFIX,datadoghq.com," + sandbox.UI_GROUPS.integrations,
-    "DOMAIN-SUFFIX,ipinfo.io,DIRECT"
+    "DOMAIN-SUFFIX,ipinfo.io,DIRECT",
+    // 冗余 / 过宽 / 长尾：不再显式挂严管
+    "DOMAIN-SUFFIX,openaiapi-site.azureedge.net," + sandbox.UI_GROUPS.ai,
+    "DOMAIN-SUFFIX,events.statsigapi.net," + sandbox.UI_GROUPS.ai,
+    "DOMAIN-SUFFIX,intercom.io," + sandbox.UI_GROUPS.integrations,
+    "DOMAIN-SUFFIX,posthog.com," + sandbox.UI_GROUPS.integrations,
+    "DOMAIN-SUFFIX,jsdelivr.net," + sandbox.UI_GROUPS.support,
+    "DOMAIN-SUFFIX,bunnycdn.com," + sandbox.UI_GROUPS.support,
+    "DOMAIN-SUFFIX,docker.com," + sandbox.UI_GROUPS.support,
+    "DOMAIN-SUFFIX,hulu.com," + sandbox.UI_GROUPS.video,
+    "DOMAIN-SUFFIX,bandcamp.com," + sandbox.UI_GROUPS.music,
+    "DOMAIN-SUFFIX,medium.com," + sandbox.UI_GROUPS.social
+  ]);
+  // OpenAI Azure CDN 主机由父后缀覆盖进支撑，不再单独挂 AI。
+  assertRulesExist(output.rules, [
+    "DOMAIN-SUFFIX,azureedge.net," + sandbox.UI_GROUPS.support,
+    "DOMAIN-SUFFIX,statsigapi.net," + sandbox.UI_GROUPS.integrations
   ]);
 }
 
@@ -892,8 +906,8 @@ function testHomeStaticSocksOnlyCountsAsResidential() {
   assert.deepEqual(residential.proxies, [sandbox.BASE.nodeNames.homeStatic]);
   assert.strictEqual(
     findGroup(output, sandbox.UI_GROUPS.strictExit).proxies[0],
-    sandbox.BASE.nodeNames.homeStatic,
-    "strict exit should prefer homeStatic node when configured"
+    expectedUnifiedExitPreferred(output, sandbox),
+    "strict exit should prefer US when available even with homeStatic"
   );
 }
 
