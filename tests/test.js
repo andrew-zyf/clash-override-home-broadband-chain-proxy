@@ -12,9 +12,20 @@ const overridePath = path.join(__dirname, "..", "src", "residential-exit-overrid
 const overrideCode = fs.readFileSync(overridePath, "utf8");
 
 const TEST_RESIDENTIAL_CREDENTIALS = {
-  username: "user",
-  password: "pass",
-  transit: { server: "residential-transit.test", port: 8001 }
+  transit: {
+    server: "residential-transit.test",
+    port: 8001,
+    username: "user",
+    password: "pass"
+  },
+  homeStatic: { server: "", port: 1080, username: "", password: "" }
+};
+
+const TEST_HOME_STATIC = {
+  server: "192.168.1.1",
+  port: 1080,
+  username: "homeuser",
+  password: "homepass"
 };
 
 // ---------------------------------------------------------------------------
@@ -90,7 +101,7 @@ function expectedGroupNames(sandbox) {
   };
 }
 
-// 媒体调度：US → JP → SG → HK → 家宽出口
+// 其他调度：US → JP → SG → HK → 统一出口 → 家宽实体节点 → 家宽组
 function expectedMediaDispatchChoices(output, sandbox) {
   const suffix = sandbox.BASE.groupNameSuffixes;
   const choices = [];
@@ -100,14 +111,28 @@ function expectedMediaDispatchChoices(output, sandbox) {
     const groupName = regionGroupName(sandbox, code, suffix.base);
     if (findGroup(output, groupName)) choices.push(groupName);
   }
+  choices.push(sandbox.UI_GROUPS.strictExit);
+  if (findProxy(output, sandbox.BASE.nodeNames.homeStatic)) {
+    choices.push(sandbox.BASE.nodeNames.homeStatic);
+  }
+  if (findProxy(output, sandbox.BASE.nodeNames.transit)) {
+    choices.push(sandbox.BASE.nodeNames.transit);
+  }
   choices.push(sandbox.BASE.residentialGroupName);
   return choices;
 }
 
-// 严管调度：家宽出口 → US → JP → SG → HK
+// 严管统一出口：家宽实体节点 → 家宽组 → US → JP → SG → HK
 function expectedStrictDispatchChoices(output, sandbox) {
   const suffix = sandbox.BASE.groupNameSuffixes;
-  const choices = [sandbox.BASE.residentialGroupName];
+  const choices = [];
+  if (findProxy(output, sandbox.BASE.nodeNames.homeStatic)) {
+    choices.push(sandbox.BASE.nodeNames.homeStatic);
+  }
+  if (findProxy(output, sandbox.BASE.nodeNames.transit)) {
+    choices.push(sandbox.BASE.nodeNames.transit);
+  }
+  choices.push(sandbox.BASE.residentialGroupName);
   const usGroupName = regionGroupName(sandbox, "US", suffix.base);
   if (findGroup(output, usGroupName)) choices.push(usGroupName);
   for (const code of ["JP", "SG", "HK"]) {
@@ -115,6 +140,16 @@ function expectedStrictDispatchChoices(output, sandbox) {
     if (findGroup(output, groupName)) choices.push(groupName);
   }
   return choices;
+}
+
+function expectedUnifiedExitPreferred(output, sandbox) {
+  if (findProxy(output, sandbox.BASE.nodeNames.homeStatic)) {
+    return sandbox.BASE.nodeNames.homeStatic;
+  }
+  if (findProxy(output, sandbox.BASE.nodeNames.transit)) {
+    return sandbox.BASE.nodeNames.transit;
+  }
+  return sandbox.BASE.residentialGroupName;
 }
 
 function strictUiGroupNames(sandbox) {
@@ -290,7 +325,7 @@ function testNormalizeOverrideMode() {
 
 // ---- script version marker ----
 function testVersionSingleDefinition() {
-  assert(overrideCode.includes("// @version 14.17"), "Expected @version 14.17");
+  assert(overrideCode.includes("// @version 14.19"), "Expected @version 14.19");
   const versionLines = overrideCode.split('\n').filter((l) =>
     l.includes("@version ")
   );
@@ -360,8 +395,8 @@ function testDnsConfigContainsFakeIpBypass() {
   const sandbox = loadCombinedSandbox();
   sandbox.USER_OPTIONS.overrideMode = "dns-sniffer-only";
   sandbox.RESIDENTIAL_CREDENTIALS = {
-    username: "", password: "",
-    transit: { server: "", port: 8001 }
+    transit: { server: "", port: 8001, username: "", password: "" },
+    homeStatic: { server: "", port: 1080, username: "", password: "" }
   };
   const baseCfg = { proxies: [], "proxy-groups": [], rules: [] };
   const output = sandbox.main(baseCfg);
@@ -382,47 +417,50 @@ function testDnsConfigContainsFakeIpBypass() {
 function testHasConfiguredResidentialCredentialsPort() {
   const fn = S.hasConfiguredResidentialCredentials;
   assert.strictEqual(fn({
-    username: "u", password: "p",
-    transit: { server: "5.6.7.8", port: 65535 }
+    transit: { server: "5.6.7.8", port: 65535, username: "u", password: "p" }
   }), true);
   assert.strictEqual(fn({
-    username: "u", password: "p",
-    transit: { server: "5.6.7.8", port: 443 }
+    transit: { server: "5.6.7.8", port: 443, username: "u", password: "p" }
   }), true);
   assert.strictEqual(fn({
-    username: "u", password: "p",
-    transit: { server: "5.6.7.8", port: 65536 }
+    transit: { server: "5.6.7.8", port: 65536, username: "u", password: "p" }
   }), false);
   assert.strictEqual(fn({
-    username: "u", password: "p",
-    transit: { server: "5.6.7.8", port: 443 }
+    transit: { server: "5.6.7.8", port: 443, username: "u", password: "p" }
   }), true);
   assert.strictEqual(fn({
-    username: "u", password: "p",
-    transit: { server: "5.6.7.8", port: "abc" }
+    transit: { server: "5.6.7.8", port: "abc", username: "u", password: "p" }
   }), false);
   assert.strictEqual(fn({
-    username: "u", password: "p",
-    transit: { server: "5.6.7.8", port: null }
+    transit: { server: "5.6.7.8", port: null, username: "u", password: "p" }
   }), false);
   assert.strictEqual(fn({
-    username: "", password: "",
-    transit: { server: "", port: 8001 }
+    transit: { server: "", port: 8001, username: "", password: "" }
   }), false, "empty defaults must fail");
   assert.strictEqual(fn({
-    username: "你的用户名", password: "你的密码",
-    transit: { server: "transit.example.com", port: 8001 }
+    transit: { server: "transit.example.com", port: 8001, username: "你的用户名", password: "你的密码" }
   }), false, "doc placeholders must fail");
   assert.strictEqual(fn({
-    username: "ChangeMe", password: "p",
-    transit: { server: "5.6.7.8", port: 8001 }
+    transit: { server: "5.6.7.8", port: 8001, username: "ChangeMe", password: "p" }
   }), false, "changeme username must fail");
   assert.strictEqual(fn({
-    username: "u", password: "p",
-    transit: { server: "Example.COM", port: 8001 }
+    transit: { server: "Example.COM", port: 8001, username: "u", password: "p" }
   }), false, "example.com server must fail");
   assert.strictEqual(fn(S.RESIDENTIAL_CREDENTIALS), false,
     "script default RESIDENTIAL_CREDENTIALS must fail");
+  assert.strictEqual(S.hasConfiguredHomeStaticCredentials({
+    homeStatic: { server: "192.168.1.1", port: 1080, username: "", password: "" }
+  }), true, "homeStatic without auth should pass");
+  assert.strictEqual(S.hasConfiguredHomeStaticCredentials({
+    homeStatic: { server: "home.example.com", port: 1080 }
+  }), false, "homeStatic placeholder server must fail");
+  assert.strictEqual(S.hasConfiguredHomeStaticCredentials({
+    homeStatic: { server: "localhost", port: 1080 }
+  }), true, "homeStatic localhost allowed");
+  assert.strictEqual(fn({
+    transit: { server: "", port: 8001, username: "", password: "" },
+    homeStatic: { server: "10.0.0.2", port: 1080, username: "", password: "" }
+  }), true, "homeStatic alone counts as configured residential");
   console.log("  PASS hasConfiguredResidentialCredentials port validation");
 }
 
@@ -436,12 +474,11 @@ function testValidProxyTypesConstant() {
   console.log("  PASS validProxyTypes constant");
 }
 
-// ---- buildResidentialProxy type validation ----
+// ---- buildResidentialProxy / homeStatic socks type validation ----
 function testBuildResidentialProxyTypeValidation() {
   const proxy = S.buildResidentialProxy(
-    { username: "u", password: "p" },
-    "test-proxy",
-    { server: "1.2.3.4", port: 8080 }
+    { server: "1.2.3.4", port: 8080, username: "u", password: "p" },
+    "test-proxy"
   );
   assert.strictEqual(proxy.type, "http");
   assert.strictEqual(proxy.name, "test-proxy");
@@ -449,14 +486,28 @@ function testBuildResidentialProxyTypeValidation() {
   assert.strictEqual(proxy.port, 8080);
   assert.strictEqual(proxy.udp, true);
 
+  const socksNoAuth = S.buildHomeStaticSocksProxy(
+    { server: "10.0.0.1", port: 1080, username: "", password: "" },
+    "home-socks"
+  );
+  assert.strictEqual(socksNoAuth.type, "socks5");
+  assert.strictEqual(socksNoAuth.username, undefined);
+  assert.strictEqual(socksNoAuth.password, undefined);
+
+  const socksAuth = S.buildHomeStaticSocksProxy(
+    { server: "10.0.0.1", port: 1080, username: "u", password: "p" },
+    "home-socks-auth"
+  );
+  assert.strictEqual(socksAuth.username, "u");
+  assert.strictEqual(socksAuth.password, "p");
+
   var saved = S.BASE.validProxyTypes;
   var httpIdx = S.BASE.validProxyTypes.indexOf("http");
   S.BASE.validProxyTypes.splice(httpIdx, 1);
   try {
     S.buildResidentialProxy(
-      { username: "u", password: "p" },
-      "test-proxy",
-      { server: "1.2.3.4", port: 8080 }
+      { server: "1.2.3.4", port: 8080, username: "u", password: "p" },
+      "test-proxy"
     );
     assert.fail("Expected buildResidentialProxy to throw when http is not in validProxyTypes");
   } catch (e) {
@@ -480,6 +531,11 @@ function assertManagedProxyTopology(output, sandbox) {
   assert(transitProxy, "transit proxy missing");
   assert.strictEqual(transitProxy.type, "http");
   assert.strictEqual(transitProxy.server, TEST_RESIDENTIAL_CREDENTIALS.transit.server);
+  assert.strictEqual(
+    findProxy(output, nodeNames.homeStatic),
+    undefined,
+    "homeStatic should be absent when not configured"
+  );
 
   const sgGroup = findGroup(output, names.sgRegion);
   assert(sgGroup, "SG region group missing");
@@ -516,8 +572,8 @@ function assertManualDispatchGroups(output, sandbox) {
   assert.deepEqual(unified.proxies, strictChoices, "unified exit choices mismatch");
   assert.strictEqual(
     unified.proxies[0],
-    sandbox.BASE.residentialGroupName,
-    "unified exit should prefer residential"
+    expectedUnifiedExitPreferred(output, sandbox),
+    "unified exit should prefer residential exit"
   );
 
   for (const groupName of strictUiGroupNames(sandbox)) {
@@ -792,8 +848,8 @@ function testProxyTargetsUseDefaultGroup() {
 function testEmptyCredentialsDegradesWithoutTransit() {
   const { sandbox, output } = runMain(null, (sb) => {
     sb.RESIDENTIAL_CREDENTIALS = {
-      username: "", password: "",
-      transit: { server: "", port: 8001 }
+      transit: { server: "", port: 8001, username: "", password: "" },
+      homeStatic: { server: "", port: 1080, username: "", password: "" }
     };
   });
   assert.strictEqual(
@@ -801,12 +857,58 @@ function testEmptyCredentialsDegradesWithoutTransit() {
     undefined,
     "empty credentials must not inject transit"
   );
+  assert.strictEqual(
+    findProxy(output, sandbox.BASE.nodeNames.homeStatic),
+    undefined,
+    "empty credentials must not inject homeStatic"
+  );
   const residential = findGroup(output, sandbox.BASE.residentialGroupName);
   assert(residential, "residential group should still exist");
   assert(residential.proxies.indexOf(sandbox.BASE.nodeNames.transit) < 0);
   assert(residential.proxies.length > 0);
   assert.strictEqual(output.dns.enable, true);
   assertRulesExist(output.rules, ["DOMAIN-SUFFIX,claude.ai," + sandbox.UI_GROUPS.ai]);
+}
+
+// 仅配置家庭静态 IP：注入 socks5，家宽组只挂该节点，算家宽。
+function testHomeStaticSocksOnlyCountsAsResidential() {
+  const { sandbox, output } = runMain(null, (sb) => {
+    sb.RESIDENTIAL_CREDENTIALS = {
+      transit: { server: "", port: 8001, username: "", password: "" },
+      homeStatic: cloneJson(TEST_HOME_STATIC)
+    };
+  });
+  const home = findProxy(output, sandbox.BASE.nodeNames.homeStatic);
+  assert(home, "homeStatic proxy missing");
+  assert.strictEqual(home.type, "socks5");
+  assert.strictEqual(home.server, TEST_HOME_STATIC.server);
+  assert.strictEqual(home.username, TEST_HOME_STATIC.username);
+  assert.strictEqual(
+    findProxy(output, sandbox.BASE.nodeNames.transit),
+    undefined,
+    "transit must be absent when only homeStatic configured"
+  );
+  const residential = findGroup(output, sandbox.BASE.residentialGroupName);
+  assert.deepEqual(residential.proxies, [sandbox.BASE.nodeNames.homeStatic]);
+  assert.strictEqual(
+    findGroup(output, sandbox.UI_GROUPS.strictExit).proxies[0],
+    sandbox.BASE.nodeNames.homeStatic,
+    "strict exit should prefer homeStatic node when configured"
+  );
+}
+
+// 静态 IP + 官方中转并存：静态 IP 优先。
+function testHomeStaticPreferredOverTransit() {
+  const { sandbox, output } = runMain(null, (sb) => {
+    sb.RESIDENTIAL_CREDENTIALS.homeStatic = cloneJson(TEST_HOME_STATIC);
+  });
+  assert(findProxy(output, sandbox.BASE.nodeNames.homeStatic));
+  assert(findProxy(output, sandbox.BASE.nodeNames.transit));
+  const residential = findGroup(output, sandbox.BASE.residentialGroupName);
+  assert.deepEqual(residential.proxies, [
+    sandbox.BASE.nodeNames.homeStatic,
+    sandbox.BASE.nodeNames.transit
+  ]);
 }
 
 function testMergedModeDoesNotRequireRegionNodes() {
@@ -832,8 +934,8 @@ function testUnifiedDnsSnifferOnlyMode() {
     (sb) => {
       sb.USER_OPTIONS.overrideMode = "dns-sniffer-only";
       sb.RESIDENTIAL_CREDENTIALS = {
-        username: "", password: "",
-        transit: { server: "", port: 8001 }
+        transit: { server: "", port: 8001, username: "", password: "" },
+        homeStatic: { server: "", port: 1080, username: "", password: "" }
       };
     }
   );
@@ -1011,8 +1113,8 @@ function testRegionRegexAcceptsUnderscoreAndNoSeparator() {
 function testMergedModeDegradesWhenCredentialsMissing() {
   const sandbox = loadCombinedSandbox();
   sandbox.RESIDENTIAL_CREDENTIALS = {
-    username: "", password: "",
-    transit: { server: "", port: 8001 }
+    transit: { server: "", port: 8001, username: "", password: "" },
+    homeStatic: { server: "", port: 1080, username: "", password: "" }
   };
   const config = createBaseConfig();
   const output = sandbox.main(config);
@@ -1092,15 +1194,29 @@ function testSubscriptionProxyGroupsAreCleaned() {
 function testPlaceholderCredentialsDegradeWithoutTransit() {
   const { sandbox, output } = runMain(null, (sb) => {
     sb.RESIDENTIAL_CREDENTIALS = {
-      username: "你的用户名",
-      password: "你的密码",
-      transit: { server: "transit.example.com", port: 8001 }
+      transit: {
+        server: "transit.example.com",
+        port: 8001,
+        username: "你的用户名",
+        password: "你的密码"
+      },
+      homeStatic: {
+        server: "home.example.com",
+        port: 1080,
+        username: "",
+        password: ""
+      }
     };
   });
   assert.strictEqual(
     findProxy(output, sandbox.BASE.nodeNames.transit),
     undefined,
     "placeholder credentials must not inject transit"
+  );
+  assert.strictEqual(
+    findProxy(output, sandbox.BASE.nodeNames.homeStatic),
+    undefined,
+    "placeholder homeStatic must not inject socks"
   );
   assert(findGroup(output, sandbox.UI_GROUPS.ai), "AI panel present with placeholders");
 }
@@ -1208,6 +1324,8 @@ const integrationTests = [
   testDefaultConfig,
   testProxyTargetsUseDefaultGroup,
   testEmptyCredentialsDegradesWithoutTransit,
+  testHomeStaticSocksOnlyCountsAsResidential,
+  testHomeStaticPreferredOverTransit,
   testMergedModeDoesNotRequireRegionNodes,
   testUnifiedDnsSnifferOnlyMode,
   testAiCliProcessProxyDefaultsOn,

@@ -4,7 +4,7 @@
 // 请在下面的 RESIDENTIAL_CREDENTIALS 和 USER_OPTIONS 中填写你的配置。
 // 兼容性：Clash Verge / Clash Party 的 JavaScriptCore；只用 ES5 语法。
 //
-// @version 14.17
+// @version 14.19
 
 // ===========================================================================
 // 用户配置
@@ -18,11 +18,19 @@ var USER_OPTIONS = {
 };
 
 var RESIDENTIAL_CREDENTIALS = {
-  username: "",
-  password: "",
+  // 官方中转
   transit: {
     server: "",
     port: 8001,
+    username: "",
+    password: "",
+  },
+  // 家庭静态 IP
+  homeStatic: {
+    server: "",
+    port: 8022,
+    username: "",
+    password: "",
   },
 };
 
@@ -1567,6 +1575,7 @@ var BASE = {
   },
   nodeNames: {
     transit: "家宽出口（官方中转）",
+    homeStatic: "家宽出口（家庭静态 IP）",
   },
   defaultProxyGroupKeywords: ["PROXY", "节点选择", "手动选择", "GLOBAL"],
   ruleTargets: {
@@ -1643,8 +1652,9 @@ function buildRegionGroupName(regionMeta, groupNameSuffix) {
   );
 }
 
-// 根据凭证和端点信息生成一个家宽出口 HTTP 代理节点。
-function buildResidentialProxy(residentialCredentials, proxyName, endpoint) {
+// 根据端点信息生成家宽出口 HTTP 代理节点（官方中转）。
+// transit: { server, port, username, password }
+function buildResidentialProxy(transit, proxyName) {
   if (BASE.validProxyTypes.indexOf("http") < 0) {
     throw createUserError(
       "家宽出口代理类型 http 不在 Clash 合法代理类型列表中，请检查 BASE.validProxyTypes",
@@ -1653,12 +1663,31 @@ function buildResidentialProxy(residentialCredentials, proxyName, endpoint) {
   return {
     name: proxyName,
     type: "http",
-    server: endpoint.server,
-    port: endpoint.port,
-    username: residentialCredentials.username,
-    password: residentialCredentials.password,
+    server: transit.server,
+    port: transit.port,
+    username: transit.username,
+    password: transit.password,
     udp: true,
   };
+}
+
+// 生成家庭静态 IP 的 SOCKS5 节点；无用户名/密码时不写入认证字段。
+function buildHomeStaticSocksProxy(homeStatic, proxyName) {
+  if (BASE.validProxyTypes.indexOf("socks5") < 0) {
+    throw createUserError(
+      "家宽出口代理类型 socks5 不在 Clash 合法代理类型列表中，请检查 BASE.validProxyTypes",
+    );
+  }
+  var proxy = {
+    name: proxyName,
+    type: "socks5",
+    server: homeStatic.server,
+    port: homeStatic.port,
+    udp: true,
+  };
+  if (homeStatic.username) proxy.username = homeStatic.username;
+  if (homeStatic.password) proxy.password = homeStatic.password;
+  return proxy;
 }
 
 // 在按 `name` 命名的数组项中查找条目下标；未命中返回 -1。
@@ -1807,16 +1836,56 @@ function upsertRegionUrlTestGroup(proxyGroups, groupName, regionNodeNames) {
   });
 }
 
-// 注入家宽出口官方中转节点。
-function writeResidentialProxies(config, residentialCredentials) {
-  upsertNamedItem(
-    config.proxies,
-    buildResidentialProxy(
-      residentialCredentials,
-      BASE.nodeNames.transit,
-      residentialCredentials.transit,
-    ),
-  );
+// 按名称删除代理节点（清理上轮残留的家宽出口节点）。
+function removeNamedProxy(config, proxyName) {
+  var proxies = config.proxies || [];
+  var index = findNamedItemIndex(proxies, proxyName);
+  if (index >= 0) proxies.splice(index, 1);
+}
+
+// 注入已配置的家宽出口节点：家庭静态 IP（SOCKS）与/或官方中转（HTTP）。
+function writeResidentialExitProxies(config, residentialExits) {
+  if (residentialExits.homeStatic) {
+    upsertNamedItem(
+      config.proxies,
+      buildHomeStaticSocksProxy(
+        residentialExits.homeStatic,
+        BASE.nodeNames.homeStatic,
+      ),
+    );
+  } else {
+    removeNamedProxy(config, BASE.nodeNames.homeStatic);
+  }
+
+  if (residentialExits.transit) {
+    upsertNamedItem(
+      config.proxies,
+      buildResidentialProxy(residentialExits.transit, BASE.nodeNames.transit),
+    );
+  } else {
+    removeNamedProxy(config, BASE.nodeNames.transit);
+  }
+}
+
+// 已配置的家宽实体节点名（静态 IP → 官方中转）。供组内成员与调度扁平挂载共用。
+function listResidentialExitNodeNames(residentialExits) {
+  var names = [];
+  if (residentialExits && residentialExits.homeStatic) {
+    names.push(BASE.nodeNames.homeStatic);
+  }
+  if (residentialExits && residentialExits.transit) {
+    names.push(BASE.nodeNames.transit);
+  }
+  return names;
+}
+
+// 家宽组成员：静态 IP 优先，其次官方中转；都没有则降级。
+function buildResidentialExitMembers(residentialExits, regionalTargets) {
+  var members = listResidentialExitNodeNames(residentialExits);
+  if (members.length === 0) {
+    return buildDegradedResidentialMembers(regionalTargets);
+  }
+  return members;
 }
 
 // 仅根据订阅节点创建或修正指定地区的 `url-test` 代理组。
@@ -1860,13 +1929,6 @@ function buildDegradedResidentialMembers(regionalTargets) {
   return members;
 }
 
-// 去掉上轮残留的官方中转节点（凭证清空后不应继续挂假节点）。
-function removeResidentialTransitProxy(config) {
-  var proxies = config.proxies || [];
-  var index = findNamedItemIndex(proxies, BASE.nodeNames.transit);
-  if (index >= 0) proxies.splice(index, 1);
-}
-
 // UI 面板代理组名常量。
 var UI_GROUPS = {
   // 严管三组共用的实际出口选择器；改这一处即可统一 AI/支撑/集成出口 IP。
@@ -1882,12 +1944,19 @@ var UI_GROUPS = {
 };
 
 // 写入 UI 面板策略组。
-// 严管：统一出口父组（默认家宽）+ 三分类面板只挂该父组，防止手动改一格导致 IP 分裂。
+// 严管：统一出口把家宽实体节点扁平挂在最前（避免只嵌套「家宽出口」组时 UI 里节点像消失），
+// 再挂家宽组与地区组；三分类面板只挂统一出口。
 // 防封号场景请勿把统一出口改成美区/机房节点组。
-// 媒体：仍美区优先，各组独立可选。
-function writeExpandedProxyGroups(config, residentialTarget, regionalTargets) {
+// 其他调度（媒体）：仍美区优先，并挂统一出口便于一键跟严管同出口。
+function writeExpandedProxyGroups(
+  config,
+  residentialTarget,
+  regionalTargets,
+  exitNodeNames,
+) {
   var proxyGroups = config["proxy-groups"];
   var regionOrder = [];
+  var exitNames = exitNodeNames || [];
   if (regionalTargets.US) regionOrder.push(regionalTargets.US);
   var remainingRegions = ["JP", "SG", "HK"];
   for (var j = 0; j < remainingRegions.length; j++) {
@@ -1895,8 +1964,17 @@ function writeExpandedProxyGroups(config, residentialTarget, regionalTargets) {
     if (target) regionOrder.push(target);
   }
 
-  var strictChoices = uniqueStrings([residentialTarget].concat(regionOrder));
-  var mediaChoices = uniqueStrings(regionOrder.concat([residentialTarget]));
+  // 严管：实体家宽节点 → 家宽组 → 地区
+  // 其他调度：地区 → 统一出口 → 实体家宽 → 家宽组（默认仍美区优先）
+  var strictChoices = uniqueStrings(
+    exitNames.concat([residentialTarget]).concat(regionOrder),
+  );
+  var mediaChoices = uniqueStrings(
+    regionOrder
+      .concat([UI_GROUPS.strictExit])
+      .concat(exitNames)
+      .concat([residentialTarget]),
+  );
   var strictOnly = [UI_GROUPS.strictExit];
 
   var subgroups = [
@@ -1915,14 +1993,17 @@ function writeExpandedProxyGroups(config, residentialTarget, regionalTargets) {
 }
 
 // 解析路由目标：地区测速组 → 家宽出口组 → UI 面板。
-// hasTransit=false 时家宽出口降级为地区候选（或 DIRECT），不依赖官方中转。
-function resolveRoutingTargets(config, hasTransit) {
+// 无任何家宽出口节点时，家宽组降级为地区候选（或 DIRECT）。
+function resolveRoutingTargets(config, residentialExits) {
   var defaultProxyGroupName = resolveDefaultProxyGroupName(config);
   var regionalTargets = {};
   var definedRegions = ["US", "JP", "HK", "SG"];
   var i;
   var code;
   var standardGroup;
+  var hasHomeStatic = !!(residentialExits && residentialExits.homeStatic);
+  var hasTransit = !!(residentialExits && residentialExits.transit);
+  var hasResidentialExit = hasHomeStatic || hasTransit;
 
   for (i = 0; i < definedRegions.length; i++) {
     code = definedRegions[i];
@@ -1941,24 +2022,44 @@ function resolveRoutingTargets(config, hasTransit) {
     }
   }
 
-  var residentialMembers = hasTransit
-    ? [BASE.nodeNames.transit]
-    : buildDegradedResidentialMembers(regionalTargets);
+  var exitNodeNames = listResidentialExitNodeNames(residentialExits || {});
+  var residentialMembers = buildResidentialExitMembers(
+    residentialExits || {},
+    regionalTargets,
+  );
   var residentialGroupName = writeResidentialGroup(config, residentialMembers);
 
+  // 实体节点与家宽组都写入默认代理组，刷新后仍能在 PROXY 里直接看到家宽出口。
+  var k;
+  for (k = 0; k < exitNodeNames.length; k++) {
+    writeManagedGroupIntoDefaultProxy(
+      config,
+      exitNodeNames[k],
+      defaultProxyGroupName,
+    );
+  }
   writeManagedGroupIntoDefaultProxy(
     config,
     residentialGroupName,
     defaultProxyGroupName,
   );
 
-  writeExpandedProxyGroups(config, residentialGroupName, regionalTargets);
+  writeExpandedProxyGroups(
+    config,
+    residentialGroupName,
+    regionalTargets,
+    exitNodeNames,
+  );
   cleanupSubscriptionProxyGroups(config, defaultProxyGroupName);
 
   return {
     residentialGroupName: residentialGroupName,
     defaultProxyTarget: defaultProxyGroupName || residentialGroupName,
-    hasTransit: !!hasTransit,
+    hasHomeStatic: hasHomeStatic,
+    hasTransit: hasTransit,
+    hasResidentialExit: hasResidentialExit,
+    expectedResidentialMembers: residentialMembers.slice(),
+    exitNodeNames: exitNodeNames.slice(),
   };
 }
 
@@ -2227,26 +2328,39 @@ function assertRoutingTargetsExist(config, routingTargets) {
   }
 }
 
-// 断言官方中转节点状态（仅有凭证时）。
-function assertTransitBindings(config, hasTransit) {
-  if (!hasTransit) {
-    if (findProxyByName(config.proxies, BASE.nodeNames.transit)) {
+// 断言已配置的家宽出口节点存在，未配置的不得残留。
+function assertResidentialExitBindings(config, routingTargets) {
+  var homeProxy = findProxyByName(config.proxies, BASE.nodeNames.homeStatic);
+  var transitProxy = findProxyByName(config.proxies, BASE.nodeNames.transit);
+
+  if (routingTargets.hasHomeStatic) {
+    if (!homeProxy || homeProxy.type !== "socks5") {
       throw createUserError(
-        "无家宽凭证时不应残留官方中转节点，请检查节点清理逻辑",
+        "家庭静态 IP 节点状态异常，请检查 RESIDENTIAL_CREDENTIALS.homeStatic",
       );
     }
-    return;
-  }
-  var transitProxy = findProxyByName(config.proxies, BASE.nodeNames.transit);
-  if (!transitProxy) {
+  } else if (homeProxy) {
     throw createUserError(
-      "官方中转节点状态异常，请检查 RESIDENTIAL_CREDENTIALS 和节点注入逻辑",
+      "未配置家庭静态 IP 时不应残留该节点，请检查节点清理逻辑",
+    );
+  }
+
+  if (routingTargets.hasTransit) {
+    if (!transitProxy || transitProxy.type !== "http") {
+      throw createUserError(
+        "官方中转节点状态异常，请检查 RESIDENTIAL_CREDENTIALS 和节点注入逻辑",
+      );
+    }
+  } else if (transitProxy) {
+    throw createUserError(
+      "无官方中转凭证时不应残留官方中转节点，请检查节点清理逻辑",
     );
   }
 }
 
-// 断言家宽出口组 shape：有凭证必须仅挂中转；无凭证不得挂中转且成员须可解析。
-function assertResidentialGroupShape(config, residentialGroupName, hasTransit) {
+// 断言家宽出口组 shape：有出口时成员集合须匹配；无出口时不得挂管理节点。
+function assertResidentialGroupShape(config, routingTargets) {
+  var residentialGroupName = routingTargets.residentialGroupName;
   var residentialGroup = findProxyGroupByName(
     config["proxy-groups"],
     residentialGroupName,
@@ -2260,8 +2374,10 @@ function assertResidentialGroupShape(config, residentialGroupName, hasTransit) {
     throw createUserError("当前家宽出口组内容异常，请检查代理组注入逻辑");
   }
 
-  if (hasTransit) {
-    if (!haveSameStringSet(proxies, [BASE.nodeNames.transit])) {
+  if (routingTargets.hasResidentialExit) {
+    if (
+      !haveSameStringSet(proxies, routingTargets.expectedResidentialMembers)
+    ) {
       throw createUserError("当前家宽出口组内容异常，请检查代理组注入逻辑");
     }
     return;
@@ -2269,8 +2385,11 @@ function assertResidentialGroupShape(config, residentialGroupName, hasTransit) {
 
   for (var i = 0; i < proxies.length; i++) {
     var member = proxies[i];
-    if (member === BASE.nodeNames.transit) {
-      throw createUserError("无家宽凭证时家宽出口组不应挂官方中转");
+    if (
+      member === BASE.nodeNames.transit ||
+      member === BASE.nodeNames.homeStatic
+    ) {
+      throw createUserError("无家宽凭证时家宽出口组不应挂管理出口节点");
     }
     if (member === "DIRECT" || member === "REJECT") continue;
     if (!hasProxyOrGroup(config, member)) {
@@ -2288,11 +2407,16 @@ function assertStrictExitCoupling(config) {
   if (!strictExit || strictExit.type !== "select") {
     throw createUserError("缺少严管统一出口组: " + UI_GROUPS.strictExit);
   }
-  if (
-    !strictExit.proxies ||
-    strictExit.proxies.length === 0 ||
-    strictExit.proxies[0] !== BASE.residentialGroupName
-  ) {
+  if (!strictExit.proxies || strictExit.proxies.length === 0) {
+    throw createUserError("严管统一出口默认首选必须是家宽出口");
+  }
+  // 首选须为家宽实体节点或家宽组（扁平挂载后节点排在组前面）。
+  var preferred = strictExit.proxies[0];
+  var residentialPreferred =
+    preferred === BASE.residentialGroupName ||
+    preferred === BASE.nodeNames.homeStatic ||
+    preferred === BASE.nodeNames.transit;
+  if (!residentialPreferred) {
     throw createUserError("严管统一出口默认首选必须是家宽出口");
   }
 
@@ -2340,12 +2464,8 @@ function assertRuleTargetBatchExpanded(
 // 验证关键规则目标是否正确写入。
 function validateManagedRouting(config, routingTargets, derived) {
   assertRoutingTargetsExist(config, routingTargets);
-  assertTransitBindings(config, routingTargets.hasTransit);
-  assertResidentialGroupShape(
-    config,
-    routingTargets.residentialGroupName,
-    routingTargets.hasTransit,
-  );
+  assertResidentialExitBindings(config, routingTargets);
+  assertResidentialGroupShape(config, routingTargets);
   assertStrictExitCoupling(config);
 
   var ruleLineLookup = buildStringLookup(config.rules);
@@ -2402,20 +2522,15 @@ function buildProcessValidationTargets(processNames) {
   return buildValidationTargets("PROCESS-NAME", processNames);
 }
 
-// 家宽出口入口。装配顺序：容器 →（可选）中转节点 → 路由目标 → 规则 → 校验。
-// residentialCredentials 为 null 时降级：不注入中转，家宽组改挂地区测速/DIRECT。
-function applyResidentialExit(config, derived, residentialCredentials) {
-  var hasTransit = !!residentialCredentials;
+// 家宽出口入口。装配顺序：容器 →（可选）出口节点 → 路由目标 → 规则 → 校验。
+// 无任何家宽出口时降级：不注入节点，家宽组改挂地区测速/DIRECT。
+function applyResidentialExit(config, derived, residentialExits) {
   var routingTargets;
 
   writeContainers(config);
-  if (hasTransit) {
-    writeResidentialProxies(config, residentialCredentials);
-  } else {
-    removeResidentialTransitProxy(config);
-  }
+  writeResidentialExitProxies(config, residentialExits || {});
 
-  routingTargets = resolveRoutingTargets(config, hasTransit);
+  routingTargets = resolveRoutingTargets(config, residentialExits || {});
   writeManagedRouting(config, routingTargets, derived);
   validateManagedRouting(config, routingTargets, derived);
 
@@ -2430,7 +2545,7 @@ function applyResidentialExit(config, derived, residentialCredentials) {
 var RESIDENTIAL_CREDENTIAL_PLACEHOLDERS = {
   username: ["你的用户名", "changeme", "example"],
   password: ["你的密码", "changeme", "example"],
-  server: ["transit.example.com", "example.com", "localhost"],
+  server: ["transit.example.com", "example.com", "localhost", "home.example.com"],
 };
 
 function isResidentialCredentialPlaceholder(kind, value) {
@@ -2443,42 +2558,84 @@ function isResidentialCredentialPlaceholder(kind, value) {
   return false;
 }
 
-function hasConfiguredResidentialCredentials(credentials) {
+function isValidProxyPort(port) {
+  return typeof port === "number" && port > 0 && port < 65536;
+}
+
+// 校验出口端点：{ server, port, username, password }
+// requireAuth=true 时用户名密码必填（官方中转）；false 时认证可选（家庭 SOCKS）。
+// allowLocalhost=true 时允许 localhost（家庭网关）。
+function hasConfiguredEndpointCredentials(endpoint, options) {
+  var requireAuth = !!(options && options.requireAuth);
+  var allowLocalhost = !!(options && options.allowLocalhost);
   if (
-    !credentials ||
-    typeof credentials.username !== "string" ||
-    credentials.username === "" ||
-    typeof credentials.password !== "string" ||
-    credentials.password === "" ||
-    !credentials.transit ||
-    typeof credentials.transit.server !== "string" ||
-    credentials.transit.server === "" ||
-    typeof credentials.transit.port !== "number" ||
-    credentials.transit.port <= 0 ||
-    credentials.transit.port >= 65536
+    !endpoint ||
+    typeof endpoint.server !== "string" ||
+    endpoint.server === "" ||
+    !isValidProxyPort(endpoint.port)
   ) {
     return false;
   }
-  if (isResidentialCredentialPlaceholder("username", credentials.username)) {
+  if (
+    !(allowLocalhost && endpoint.server.toLowerCase() === "localhost") &&
+    isResidentialCredentialPlaceholder("server", endpoint.server)
+  ) {
     return false;
   }
-  if (isResidentialCredentialPlaceholder("password", credentials.password)) {
+
+  var username = typeof endpoint.username === "string" ? endpoint.username : "";
+  var password = typeof endpoint.password === "string" ? endpoint.password : "";
+  if (requireAuth) {
+    if (username === "" || password === "") return false;
+    if (isResidentialCredentialPlaceholder("username", username)) return false;
+    if (isResidentialCredentialPlaceholder("password", password)) return false;
+    return true;
+  }
+  if (username !== "" && isResidentialCredentialPlaceholder("username", username)) {
     return false;
   }
-  if (isResidentialCredentialPlaceholder("server", credentials.transit.server)) {
+  if (password !== "" && isResidentialCredentialPlaceholder("password", password)) {
     return false;
   }
   return true;
 }
 
-function cloneResidentialCredentials(credentials) {
+// 官方中转 HTTP：transit 内 server/port/username/password。
+function hasConfiguredTransitCredentials(credentials) {
+  return (
+    !!credentials &&
+    hasConfiguredEndpointCredentials(credentials.transit, {
+      requireAuth: true,
+      allowLocalhost: false,
+    })
+  );
+}
+
+// 家庭静态 IP SOCKS5：homeStatic 内同名字段；认证可选；允许 localhost。
+function hasConfiguredHomeStaticCredentials(credentials) {
+  return (
+    !!credentials &&
+    hasConfiguredEndpointCredentials(credentials.homeStatic, {
+      requireAuth: false,
+      allowLocalhost: true,
+    })
+  );
+}
+
+// 任一出口配置齐全即视为已配置家宽（兼容旧测试名）。
+function hasConfiguredResidentialCredentials(credentials) {
+  return (
+    hasConfiguredTransitCredentials(credentials) ||
+    hasConfiguredHomeStaticCredentials(credentials)
+  );
+}
+
+function cloneEndpointCredentials(endpoint) {
   return {
-    username: credentials.username,
-    password: credentials.password,
-    transit: {
-      server: credentials.transit.server,
-      port: credentials.transit.port,
-    },
+    server: endpoint.server,
+    port: endpoint.port,
+    username: typeof endpoint.username === "string" ? endpoint.username : "",
+    password: typeof endpoint.password === "string" ? endpoint.password : "",
   };
 }
 
@@ -2520,12 +2677,16 @@ function shouldApplyOnlyDnsAndSniffer() {
   );
 }
 
-// 有效凭证则克隆返回；空/占位符返回 null（merged 降级，不抛错、不注入假中转）。
-function resolveOptionalResidentialCredentials(credentials) {
-  if (hasConfiguredResidentialCredentials(credentials)) {
-    return cloneResidentialCredentials(credentials);
-  }
-  return null;
+// 解析可选家宽出口：官方中转与/或家庭静态 IP；都没有则空对象（降级）。
+function resolveResidentialExits(credentials) {
+  return {
+    transit: hasConfiguredTransitCredentials(credentials)
+      ? cloneEndpointCredentials(credentials.transit)
+      : null,
+    homeStatic: hasConfiguredHomeStaticCredentials(credentials)
+      ? cloneEndpointCredentials(credentials.homeStatic)
+      : null,
+  };
 }
 
 function main(config) {
@@ -2539,6 +2700,6 @@ function main(config) {
   return applyResidentialExit(
     config,
     DNS_SNIFFER_MODULE.DERIVED,
-    resolveOptionalResidentialCredentials(RESIDENTIAL_CREDENTIALS),
+    resolveResidentialExits(RESIDENTIAL_CREDENTIALS),
   );
 }
