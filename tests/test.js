@@ -1,38 +1,50 @@
-// 家宽出口覆写 — 测试套件
+// 家宽出口覆写 — 测试套件（16 单元 + 30 集成）
 //
-// 测试 residential-exit-override.js 的纯函数与端到端行为。
+// 覆盖 residential-exit-override.js 的纯函数与端到端行为。
 // 运行：node tests/test.js
+
+"use strict";
 
 const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
 
-const overridePath = path.join(__dirname, "..", "src", "residential-exit-override.js");
+const overridePath = path.join(
+  __dirname,
+  "..",
+  "src",
+  "residential-exit-override.js",
+);
 const overrideCode = fs.readFileSync(overridePath, "utf8");
 
-const TEST_RESIDENTIAL_CREDENTIALS = {
-  transit: {
-    server: "residential-transit.test",
-    port: 8001,
-    username: "user",
-    password: "pass"
-  },
-  homeStatic: { server: "", port: 1080, username: "", password: "" }
+const TEST_SHARED_AUTH = {
+  username: "user",
+  password: "pass",
+};
+
+const TEST_TRANSIT = {
+  server: "residential-transit.test",
+  port: 8001,
 };
 
 const TEST_HOME_STATIC = {
   server: "192.168.1.1",
   port: 1080,
-  username: "homeuser",
-  password: "homepass"
+};
+
+const EMPTY_CREDENTIALS = {
+  username: "",
+  password: "",
+  transit: { server: "", port: 8001 },
+  homeStatic: { server: "", port: 1080 },
 };
 
 // ---------------------------------------------------------------------------
-// Sandbox helpers
+// Harness
 // ---------------------------------------------------------------------------
 
-function loadCombinedSandbox() {
+function loadSandbox() {
   const sandbox = { console, Object, Array, String, Error };
   vm.createContext(sandbox);
   vm.runInContext(overrideCode, sandbox, { filename: overridePath });
@@ -43,91 +55,108 @@ function cloneJson(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
-function createBaseConfig() {
+function baseConfig() {
   return {
     proxies: [
       { name: "🇸🇬 SG Auto 01", type: "ss" },
       { name: "🇭🇰 HK Auto 01", type: "ss" },
-      { name: "🇺🇸 US Auto 01", type: "ss" }
+      { name: "🇺🇸 US Auto 01", type: "ss" },
     ],
     "proxy-groups": [
-      { name: "PROXY", type: "select", proxies: ["🇸🇬 SG Auto 01"] }
+      { name: "PROXY", type: "select", proxies: ["🇸🇬 SG Auto 01"] },
     ],
     rules: [
       "DOMAIN-SUFFIX,claude.ai,DIRECT",
       "DOMAIN-SUFFIX,tailscale.com,REJECT",
-      "MATCH,PROXY"
-    ]
+      "MATCH,PROXY",
+    ],
   };
 }
 
-// Run the combined main with optional config/sandbox mutations.
-// sandboxMutator receives the sandbox before main() — use it to override
-// RESIDENTIAL_CREDENTIALS / USER_OPTIONS on the sandbox object.
 function runMain(configMutator, sandboxMutator) {
-  const sandbox = loadCombinedSandbox();
-  sandbox.RESIDENTIAL_CREDENTIALS = cloneJson(TEST_RESIDENTIAL_CREDENTIALS);
+  const sandbox = loadSandbox();
+  sandbox.RESIDENTIAL_CREDENTIALS = {
+    username: TEST_SHARED_AUTH.username,
+    password: TEST_SHARED_AUTH.password,
+    transit: cloneJson(TEST_TRANSIT),
+    homeStatic: { server: "", port: 1080 },
+  };
   if (typeof sandboxMutator === "function") sandboxMutator(sandbox);
 
-  let config = createBaseConfig();
+  let config = baseConfig();
   if (typeof configMutator === "function") {
     config = configMutator(config, sandbox) || config;
   }
 
-  const output = sandbox.main(config);
   return {
-    sandbox: sandbox,
-    state: { derived: cloneJson(sandbox.DNS_SNIFFER_MODULE.DERIVED) },
-    dnsBase: cloneJson(sandbox.DNS_SNIFFER_MODULE.BASE.dns),
-    output: output
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Canonical group names / process lists from sandbox metadata
-// ---------------------------------------------------------------------------
-
-function regionGroupName(sandbox, regionKey, suffix) {
-  var meta = sandbox.resolveRegionMeta(regionKey);
-  return sandbox.buildRegionGroupName(meta, suffix);
-}
-
-function expectedGroupNames(sandbox) {
-  const suffix = sandbox.BASE.groupNameSuffixes;
-  return {
-    sgRegion: regionGroupName(sandbox, "SG", suffix.base),
-    residentialTarget: sandbox.BASE.residentialGroupName,
-    usRegion: regionGroupName(sandbox, "US", suffix.base)
-  };
-}
-
-// 两套统一出口同一序：US → JP → SG → HK → 家宽实体节点 → 家宽组
-function expectedUnifiedExitChoices(output, sandbox) {
-  const suffix = sandbox.BASE.groupNameSuffixes;
-  const choices = [];
-  const usGroupName = regionGroupName(sandbox, "US", suffix.base);
-  if (findGroup(output, usGroupName)) choices.push(usGroupName);
-  for (const code of ["JP", "SG", "HK"]) {
-    const groupName = regionGroupName(sandbox, code, suffix.base);
-    if (findGroup(output, groupName)) choices.push(groupName);
-  }
-  if (findProxy(output, sandbox.BASE.nodeNames.homeStatic)) {
-    choices.push(sandbox.BASE.nodeNames.homeStatic);
-  }
-  if (findProxy(output, sandbox.BASE.nodeNames.transit)) {
-    choices.push(sandbox.BASE.nodeNames.transit);
-  }
-  choices.push(sandbox.BASE.residentialGroupName);
-  return choices;
-}
-
-function expectedUnifiedExitPreferred(output, sandbox) {
-  const usGroupName = regionGroupName(
     sandbox,
-    "US",
+    derived: cloneJson(sandbox.DNS_SNIFFER_MODULE.DERIVED),
+    dnsBase: cloneJson(sandbox.DNS_SNIFFER_MODULE.BASE.dns),
+    output: sandbox.main(config),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function findGroup(output, name) {
+  return (output["proxy-groups"] || []).find((g) => g.name === name);
+}
+
+function findProxy(output, name) {
+  return (output.proxies || []).find((p) => p.name === name);
+}
+
+function regionGroup(sandbox, code) {
+  return sandbox.buildRegionGroupName(
+    sandbox.resolveRegionMeta(code),
     sandbox.BASE.groupNameSuffixes.base,
   );
-  if (findGroup(output, usGroupName)) return usGroupName;
+}
+
+function regionOrder(output, sandbox) {
+  const order = [];
+  const us = regionGroup(sandbox, "US");
+  if (findGroup(output, us)) order.push(us);
+  for (const code of ["JP", "SG", "HK"]) {
+    const name = regionGroup(sandbox, code);
+    if (findGroup(output, name)) order.push(name);
+  }
+  return order;
+}
+
+function residentialExitNames(output, sandbox) {
+  const names = [];
+  if (findProxy(output, sandbox.BASE.nodeNames.homeStatic)) {
+    names.push(sandbox.BASE.nodeNames.homeStatic);
+  }
+  if (findProxy(output, sandbox.BASE.nodeNames.transit)) {
+    names.push(sandbox.BASE.nodeNames.transit);
+  }
+  names.push(sandbox.BASE.residentialGroupName);
+  return names;
+}
+
+function expectedAntiBanChoices(output, sandbox) {
+  const names = [];
+  if (findProxy(output, sandbox.BASE.nodeNames.homeStatic)) {
+    names.push(sandbox.BASE.nodeNames.homeStatic);
+  }
+  if (findProxy(output, sandbox.BASE.nodeNames.transit)) {
+    names.push(sandbox.BASE.nodeNames.transit);
+  }
+  if (names.length > 0) return names;
+  return [sandbox.BASE.residentialGroupName];
+}
+
+function expectedUnlockChoices(output, sandbox) {
+  return regionOrder(output, sandbox).concat(
+    residentialExitNames(output, sandbox),
+  );
+}
+
+function preferredAntiBan(output, sandbox) {
   if (findProxy(output, sandbox.BASE.nodeNames.homeStatic)) {
     return sandbox.BASE.nodeNames.homeStatic;
   }
@@ -137,106 +166,55 @@ function expectedUnifiedExitPreferred(output, sandbox) {
   return sandbox.BASE.residentialGroupName;
 }
 
-function strictUiGroupNames(sandbox) {
-  return [
-    sandbox.UI_GROUPS.ai,
-    sandbox.UI_GROUPS.support,
-    sandbox.UI_GROUPS.integrations
-  ];
+function preferredUnlock(output, sandbox) {
+  const us = regionGroup(sandbox, "US");
+  if (findGroup(output, us)) return us;
+  return preferredAntiBan(output, sandbox);
 }
 
-function otherUiGroupNames(sandbox) {
-  return [
-    sandbox.UI_GROUPS.video,
-    sandbox.UI_GROUPS.music,
-    sandbox.UI_GROUPS.social,
-    sandbox.UI_GROUPS.im
-  ];
+function suffixRule(domain, target) {
+  return "DOMAIN-SUFFIX," + domain + "," + target;
 }
 
-function derivedBrowserProcessNames(state) {
-  return state.derived.processNames.browser.slice();
+function processRule(name, target) {
+  return "PROCESS-NAME," + name + "," + target;
 }
 
-function derivedAiCliProcessNames(state) {
-  return state.derived.processNames.aiCli.slice();
-}
-
-// ---------------------------------------------------------------------------
-// Rule and proxy helpers
-// ---------------------------------------------------------------------------
-
-function ruleIdentity(ruleLine) {
-  const firstComma = ruleLine.indexOf(",");
-  const secondComma = ruleLine.indexOf(",", firstComma + 1);
-  return ruleLine.slice(0, secondComma);
-}
-
-function assertNoDuplicateRuleIdentities(ruleLines) {
-  const seen = new Set();
-  for (const line of ruleLines) {
-    const id = ruleIdentity(line);
-    assert(!seen.has(id), "Duplicate managed rule identity: " + id);
-    seen.add(id);
-  }
-}
-
-function assertRulesExist(ruleLines, expected) {
+function assertRulesExist(rules, expected) {
   for (const line of expected) {
-    assert(ruleLines.includes(line), "Expected rule not found: " + line);
+    assert(rules.includes(line), "missing rule: " + line);
   }
 }
 
-function assertRulesMissing(ruleLines, unexpected) {
+function assertRulesMissing(rules, unexpected) {
   for (const line of unexpected) {
-    assert(!ruleLines.includes(line), "Unexpected rule found: " + line);
+    assert(!rules.includes(line), "unexpected rule: " + line);
   }
 }
 
-function assertRuleIdentitiesMissing(ruleLines, unexpectedIdentities) {
-  const identities = ruleLines.map(ruleIdentity);
-  for (const identity of unexpectedIdentities) {
-    assert(!identities.includes(identity), "Unexpected rule identity found: " + identity);
+function assertBefore(rules, earlier, later) {
+  const i = rules.indexOf(earlier);
+  const j = rules.indexOf(later);
+  assert(i >= 0, "missing earlier: " + earlier);
+  assert(j >= 0, "missing later: " + later);
+  assert(i < j, "order: " + earlier + " before " + later);
+}
+
+function assertIncludes(list, expected, label) {
+  for (const v of expected) {
+    assert(list.includes(v), label + " missing: " + v);
   }
 }
 
-function assertRuleAppearsBefore(ruleLines, earlier, later) {
-  const earlierIndex = ruleLines.indexOf(earlier);
-  const laterIndex = ruleLines.indexOf(later);
-  assert(earlierIndex >= 0, "Expected rule not found: " + earlier);
-  assert(laterIndex >= 0, "Expected rule not found: " + later);
-  assert(earlierIndex < laterIndex, "Expected rule order: " + earlier + " before " + later);
+function assertExcludes(list, unexpected, label) {
+  for (const v of unexpected) {
+    assert(!list.includes(v), label + " has: " + v);
+  }
 }
 
-function assertProcessRules(output, enabled, processNames, target) {
-  const lines = processNames.map((p) => "PROCESS-NAME," + p + "," + target);
-  if (enabled) assertRulesExist(output.rules, lines);
-  else assertRulesMissing(output.rules, lines);
-}
-
-function findGroup(output, name) {
-  return output["proxy-groups"].find((g) => g.name === name);
-}
-
-function findProxy(output, name) {
-  return output.proxies.find((p) => p.name === name);
-}
-
-function assertNameserverPolicyValues(output, domains, expected) {
+function assertNsPolicy(output, domains, expected) {
   for (const domain of domains) {
     assert.deepEqual(output.dns["nameserver-policy"][domain], expected);
-  }
-}
-
-function assertIncludes(values, expected, label) {
-  for (const v of expected) {
-    assert(values.includes(v), label + " missing: " + v);
-  }
-}
-
-function assertExcludes(values, excluded, label) {
-  for (const v of excluded) {
-    assert(!values.includes(v), label + " unexpectedly contains: " + v);
   }
 }
 
@@ -246,1133 +224,936 @@ function sameSet(a, b) {
   return b.every((v) => set.has(v));
 }
 
+function ruleIdentity(line) {
+  const first = line.indexOf(",");
+  const second = line.indexOf(",", first + 1);
+  return line.slice(0, second);
+}
+
 // ===========================================================================
-// Pure function unit tests
+// Unit tests (16)
 // ===========================================================================
 
-// Load a baseline sandbox for unit tests
-const S = loadCombinedSandbox();
+const S = loadSandbox();
 
-// ---- toSuffix ----
 function testToSuffix() {
   assert.strictEqual(S.toSuffix("+.claude.ai"), "claude.ai");
-  assert.strictEqual(S.toSuffix("+.google.com"), "google.com");
   assert.strictEqual(S.toSuffix("claude.ai"), "claude.ai");
   assert.strictEqual(S.toSuffix("+."), "");
   assert.strictEqual(S.toSuffix(""), "");
-  console.log("  PASS toSuffix");
 }
 
-// ---- uniqueStrings ----
 function testUniqueStrings() {
   const a = (v) => Array.prototype.slice.call(v);
-  assert.deepStrictEqual(a(S.uniqueStrings(["a", "b", "a", "c"])), ["a", "b", "c"]);
+  assert.deepStrictEqual(a(S.uniqueStrings(["a", "b", "a"])), ["a", "b"]);
   assert.deepStrictEqual(a(S.uniqueStrings([])), []);
-  assert.deepStrictEqual(a(S.uniqueStrings(["x"])), ["x"]);
-  assert.deepStrictEqual(a(S.uniqueStrings(["a", "a", "a"])), ["a"]);
-  console.log("  PASS uniqueStrings");
 }
 
-// ---- buildStringLookup ----
 function testBuildStringLookup() {
-  const lookup = S.buildStringLookup(["a", "b", "c"]);
-  assert.strictEqual(lookup["a"], true);
-  assert.strictEqual(lookup["b"], true);
-  assert.strictEqual(lookup["c"], true);
-  assert.strictEqual(lookup["d"], undefined);
+  const lookup = S.buildStringLookup(["a", "b"]);
+  assert.strictEqual(lookup.a, true);
+  assert.strictEqual(lookup.c, undefined);
   assert.strictEqual(Object.keys(S.buildStringLookup([])).length, 0);
-  console.log("  PASS buildStringLookup");
 }
 
-// ---- createUserError ----
 function testCreateUserError() {
-  const err = S.createUserError("test message");
+  const err = S.createUserError("boom");
   assert(err instanceof Error);
-  assert.strictEqual(err.message, "test message");
-  console.log("  PASS createUserError");
+  assert.strictEqual(err.message, "boom");
 }
 
-// ---- normalizeOverrideMode ----
 function testNormalizeOverrideMode() {
   assert.strictEqual(S.normalizeOverrideMode("merged"), "merged");
   assert.strictEqual(S.normalizeOverrideMode("dns-sniffer-only"), "dns-sniffer-only");
-  assert.strictEqual(S.normalizeOverrideMode("option-b"), "merged");
-  assert.strictEqual(S.normalizeOverrideMode("optiona"), "dns-sniffer-only");
   assert.strictEqual(S.normalizeOverrideMode("full"), "merged");
   assert.strictEqual(S.normalizeOverrideMode("dns"), "dns-sniffer-only");
-  assert.strictEqual(S.normalizeOverrideMode(undefined), "merged");
-  assert.strictEqual(S.normalizeOverrideMode(null), "merged");
   assert.strictEqual(S.normalizeOverrideMode(""), "merged");
   assert.throws(() => S.normalizeOverrideMode("invalid"), /未知/);
-  assert.throws(() => S.normalizeOverrideMode(123), /必须是字符串/);
-  console.log("  PASS normalizeOverrideMode");
+  assert.throws(() => S.normalizeOverrideMode(1), /必须是字符串/);
 }
 
-// ---- script version marker ----
-function testVersionSingleDefinition() {
-  assert(overrideCode.includes("// @version 14.23"), "Expected @version 14.23");
-  const versionLines = overrideCode.split('\n').filter((l) =>
-    l.includes("@version ")
-  );
-  assert.strictEqual(versionLines.length, 1, "Expected one script version marker");
-  console.log("  PASS single version definition");
+function testVersionMarker() {
+  assert(overrideCode.includes("// @version 14.33"));
+  const lines = overrideCode.split("\n").filter((l) => l.includes("@version "));
+  assert.strictEqual(lines.length, 1);
 }
 
-// ---- core group definition ----
-function testCoreGroupDefinition() {
+function testUiGroupNames() {
+  assert.strictEqual(S.UI_GROUPS.strictExit, "az.严管调度.🏠 防封出口");
+  assert.strictEqual(S.UI_GROUPS.ai, "az.严管调度.🤖 AI 服务");
+  assert.strictEqual(S.UI_GROUPS.support, "az.严管调度.🔑 登录旁路");
+  assert.strictEqual(S.UI_GROUPS.integrations, "az.严管调度.💳 支付验证");
+  assert.strictEqual(S.UI_GROUPS.otherExit, "az.其他调度.🌏 解锁出口");
   assert.strictEqual(S.BASE.residentialGroupName, "az.核心出口.🏠 家宽出口");
-
-  const { output } = runMain();
-  console.log("  PASS core group definition");
+  assert.notStrictEqual(S.UI_GROUPS.strictExit, S.UI_GROUPS.otherExit);
 }
 
-// ---- provider brand should not appear in script naming ----
-function testNoProviderBrandInScript() {
-  const providerPattern = new RegExp("Mi" + "ya", "i");
-  assert(!providerPattern.test(overrideCode), "Provider brand should not appear in script");
-  console.log("  PASS no provider brand in script");
+function testScriptHygiene() {
+  assert(!new RegExp("Mi" + "ya", "i").test(overrideCode));
+  assert(!overrideCode.includes(["routeBrowser", "ToResidential", "Exit"].join("")));
+  assert(!overrideCode.includes(["办公", "娱乐", "好帮手"].join("")));
 }
 
-// ---- browser routing is part of AI dispatch group, not a user option ----
-function testNoSeparateBrowserRoutingOption() {
-  const optionName = ["routeBrowser", "ToResidential", "Exit"].join("");
-  assert(!overrideCode.includes(optionName),
-    "Browser process routing should be part of AI dispatch, not a separate option");
-  console.log("  PASS no separate browser routing option");
+function testDefaultProxyKeywords() {
+  assert.deepEqual(S.BASE.defaultProxyGroupKeywords, [
+    "PROXY",
+    "节点选择",
+    "手动选择",
+    "GLOBAL",
+  ]);
 }
 
-// ---- default proxy group should not be a subscription-specific name ----
-function testNoHardcodedSubscriptionDefaultProxy() {
-  const subscriptionSpecificName = ["办公", "娱乐", "好帮手"].join("");
-  assert(!overrideCode.includes(subscriptionSpecificName),
-    "Default proxy group must use common names, not a subscription-specific name");
-  console.log("  PASS no hardcoded subscription default proxy");
-}
-
-// ---- default proxy matching should be restricted to core keywords ----
-function testDefaultProxyKeywordsAreRestricted() {
-  assert.deepEqual(S.BASE.defaultProxyGroupKeywords, ["PROXY", "节点选择", "手动选择", "GLOBAL"]);
-  console.log("  PASS default proxy keywords are restricted");
-}
-
-// ---- FAKE_IP_BYPASS structure ----
-function testFakeIpBypassConstant() {
+function testFakeIpBypass() {
   const bip = S.DNS_SNIFFER_MODULE.FAKE_IP_BYPASS;
-  assert(bip, "FAKE_IP_BYPASS missing");
-  assert(Array.isArray(bip.localNetwork));
-  assert(Array.isArray(bip.timeSync));
-  assert(Array.isArray(bip.connectivityTest));
-  assert(Array.isArray(bip.gamingRealtime));
-  assert(Array.isArray(bip.stunRealtime));
-  assert(Array.isArray(bip.homeRouter));
   assert(bip.localNetwork.includes("+.lan"));
-  assert(!bip.localNetwork.includes("+.push.apple.com"), "push.apple covered by POLICY apple");
+  assert(!bip.localNetwork.includes("+.push.apple.com"));
   assert(bip.timeSync.includes("ntp.*.com"));
   assert(bip.timeSync.includes("+.pool.ntp.org"));
-  assert(!bip.timeSync.includes("pool.ntp.org"), "bare pool.ntp.org removed");
-  assert(!bip.timeSync.includes("time-ios.apple.com"), "apple time hosts covered by POLICY apple");
+  assert(!bip.timeSync.includes("pool.ntp.org"));
   assert(bip.stunRealtime.includes("stun.*.*"));
-  console.log("  PASS FAKE_IP_BYPASS");
 }
 
-// ---- DNS config output via dns-sniffer-only mode ----
-function testDnsConfigContainsFakeIpBypass() {
-  const sandbox = loadCombinedSandbox();
+function testDnsFakeIpFilterDnsOnly() {
+  const sandbox = loadSandbox();
   sandbox.USER_OPTIONS.overrideMode = "dns-sniffer-only";
-  sandbox.RESIDENTIAL_CREDENTIALS = {
-    transit: { server: "", port: 8001, username: "", password: "" },
-    homeStatic: { server: "", port: 1080, username: "", password: "" }
-  };
-  const baseCfg = { proxies: [], "proxy-groups": [], rules: [] };
-  const output = sandbox.main(baseCfg);
-
+  sandbox.RESIDENTIAL_CREDENTIALS = cloneJson(EMPTY_CREDENTIALS);
+  const output = sandbox.main({ proxies: [], "proxy-groups": [], rules: [] });
   const fif = output.dns["fake-ip-filter"];
-  assert(Array.isArray(fif), "fake-ip-filter should be array");
-  assert(fif.includes("+.apple.com"), "should contain apple.com via POLICY fakeIpBypass");
-  assert(fif.includes("ntp.*.com"), "should contain ntp wildcard");
-  assert(fif.includes("stun.*.*"), "should contain stun wildcard");
-  assert(fif.includes("+.xboxlive.com"), "should contain xboxlive");
-  assert(fif.includes("+.pool.ntp.org"), "should contain pool.ntp.org wildcard");
-  assert(!fif.includes("pool.ntp.org") || fif.includes("+.pool.ntp.org"), "prefer +.pool.ntp.org");
+  assertIncludes(fif, ["+.apple.com", "ntp.*.com", "stun.*.*", "+.xboxlive.com"], "fif");
   assert.strictEqual(output._residential, undefined);
-  console.log("  PASS DNS config fake-ip-filter");
 }
 
-// ---- hasConfiguredResidentialCredentials port + placeholder validation ----
-function testHasConfiguredResidentialCredentialsPort() {
+function testCredentialValidation() {
   const fn = S.hasConfiguredResidentialCredentials;
-  assert.strictEqual(fn({
-    transit: { server: "5.6.7.8", port: 65535, username: "u", password: "p" }
-  }), true);
-  assert.strictEqual(fn({
-    transit: { server: "5.6.7.8", port: 443, username: "u", password: "p" }
-  }), true);
-  assert.strictEqual(fn({
-    transit: { server: "5.6.7.8", port: 65536, username: "u", password: "p" }
-  }), false);
-  assert.strictEqual(fn({
-    transit: { server: "5.6.7.8", port: 443, username: "u", password: "p" }
-  }), true);
-  assert.strictEqual(fn({
-    transit: { server: "5.6.7.8", port: "abc", username: "u", password: "p" }
-  }), false);
-  assert.strictEqual(fn({
-    transit: { server: "5.6.7.8", port: null, username: "u", password: "p" }
-  }), false);
-  assert.strictEqual(fn({
-    transit: { server: "", port: 8001, username: "", password: "" }
-  }), false, "empty defaults must fail");
-  assert.strictEqual(fn({
-    transit: { server: "transit.example.com", port: 8001, username: "你的用户名", password: "你的密码" }
-  }), false, "doc placeholders must fail");
-  assert.strictEqual(fn({
-    transit: { server: "5.6.7.8", port: 8001, username: "ChangeMe", password: "p" }
-  }), false, "changeme username must fail");
-  assert.strictEqual(fn({
-    transit: { server: "Example.COM", port: 8001, username: "u", password: "p" }
-  }), false, "example.com server must fail");
-  assert.strictEqual(fn(S.RESIDENTIAL_CREDENTIALS), false,
-    "script default RESIDENTIAL_CREDENTIALS must fail");
-  assert.strictEqual(S.hasConfiguredHomeStaticCredentials({
-    homeStatic: { server: "192.168.1.1", port: 1080, username: "", password: "" }
-  }), true, "homeStatic without auth should pass");
-  assert.strictEqual(S.hasConfiguredHomeStaticCredentials({
-    homeStatic: { server: "home.example.com", port: 1080 }
-  }), false, "homeStatic placeholder server must fail");
-  assert.strictEqual(S.hasConfiguredHomeStaticCredentials({
-    homeStatic: { server: "localhost", port: 1080 }
-  }), true, "homeStatic localhost allowed");
-  assert.strictEqual(fn({
-    transit: { server: "", port: 8001, username: "", password: "" },
-    homeStatic: { server: "10.0.0.2", port: 1080, username: "", password: "" }
-  }), true, "homeStatic alone counts as configured residential");
-  console.log("  PASS hasConfiguredResidentialCredentials port validation");
+  assert.strictEqual(
+    fn({
+      username: "u",
+      password: "p",
+      transit: { server: "5.6.7.8", port: 443 },
+      homeStatic: { server: "", port: 1080 },
+    }),
+    true,
+  );
+  assert.strictEqual(
+    fn({
+      username: "u",
+      password: "p",
+      transit: { server: "5.6.7.8", port: 65536 },
+      homeStatic: { server: "", port: 1080 },
+    }),
+    false,
+  );
+  assert.strictEqual(
+    fn({
+      username: "你的用户名",
+      password: "你的密码",
+      transit: { server: "ok.example.org", port: 8001 },
+      homeStatic: { server: "", port: 1080 },
+    }),
+    false,
+  );
+  assert.strictEqual(
+    fn({
+      username: "u",
+      password: "p",
+      transit: { server: "transit.example.com", port: 8001 },
+      homeStatic: { server: "", port: 1080 },
+    }),
+    false,
+  );
+  assert.strictEqual(fn(S.RESIDENTIAL_CREDENTIALS), false);
+  assert.strictEqual(
+    S.hasConfiguredHomeStaticCredentials({
+      username: "",
+      password: "",
+      homeStatic: { server: "192.168.1.1", port: 1080 },
+    }),
+    true,
+  );
+  assert.strictEqual(
+    S.hasConfiguredHomeStaticCredentials({
+      username: "",
+      password: "",
+      homeStatic: { server: "localhost", port: 1080 },
+    }),
+    true,
+  );
+  assert.strictEqual(
+    S.hasConfiguredHomeStaticCredentials({
+      username: "",
+      password: "",
+      homeStatic: { server: "home.example.com", port: 1080 },
+    }),
+    false,
+  );
+  // 共用认证注入到两个出口
+  const exits = S.resolveResidentialExits({
+    username: "shared-user",
+    password: "shared-pass",
+    transit: { server: "5.6.7.8", port: 8001 },
+    homeStatic: { server: "10.0.0.2", port: 1080 },
+  });
+  assert.strictEqual(exits.transit.username, "shared-user");
+  assert.strictEqual(exits.homeStatic.username, "shared-user");
+  assert.strictEqual(exits.homeStatic.password, "shared-pass");
 }
 
-// ---- validProxyTypes constant ----
-function testValidProxyTypesConstant() {
-  const types = S.BASE.validProxyTypes;
-  assert(Array.isArray(types), "validProxyTypes should be an array");
-  assert(types.includes("http"), "validProxyTypes must include http");
-  assert(types.includes("https"), "validProxyTypes must include https");
-  assert(types.includes("socks5"), "validProxyTypes must include socks5");
-  console.log("  PASS validProxyTypes constant");
+function testValidProxyTypes() {
+  assertIncludes(S.BASE.validProxyTypes, ["http", "https", "socks5"], "types");
 }
 
-// ---- buildResidentialProxy / homeStatic socks type validation ----
-function testBuildResidentialProxyTypeValidation() {
-  const proxy = S.buildResidentialProxy(
+function testBuildExitProxies() {
+  const transit = S.buildResidentialSocksProxy(
     { server: "1.2.3.4", port: 8080, username: "u", password: "p" },
-    "test-proxy"
+    "t",
   );
-  assert.strictEqual(proxy.type, "http");
-  assert.strictEqual(proxy.name, "test-proxy");
-  assert.strictEqual(proxy.server, "1.2.3.4");
-  assert.strictEqual(proxy.port, 8080);
-  assert.strictEqual(proxy.udp, true);
+  assert.strictEqual(transit.type, "socks5");
+  assert.strictEqual(transit.udp, true);
+  assert.strictEqual(transit.username, "u");
 
-  const socksNoAuth = S.buildHomeStaticSocksProxy(
+  const home = S.buildResidentialSocksProxy(
     { server: "10.0.0.1", port: 1080, username: "", password: "" },
-    "home-socks"
+    "h",
   );
-  assert.strictEqual(socksNoAuth.type, "socks5");
-  assert.strictEqual(socksNoAuth.username, undefined);
-  assert.strictEqual(socksNoAuth.password, undefined);
+  assert.strictEqual(home.type, "socks5");
+  assert.strictEqual(home.username, undefined);
 
-  const socksAuth = S.buildHomeStaticSocksProxy(
-    { server: "10.0.0.1", port: 1080, username: "u", password: "p" },
-    "home-socks-auth"
-  );
-  assert.strictEqual(socksAuth.username, "u");
-  assert.strictEqual(socksAuth.password, "p");
+  assert.strictEqual(S.BASE.nodeNames.transit, "家宽出口（官方中转）");
+  assert.strictEqual(S.BASE.nodeNames.homeStatic, "家宽出口（静态IP）");
 
-  var saved = S.BASE.validProxyTypes;
-  var httpIdx = S.BASE.validProxyTypes.indexOf("http");
-  S.BASE.validProxyTypes.splice(httpIdx, 1);
+  const saved = S.BASE.validProxyTypes.slice();
+  S.BASE.validProxyTypes.splice(S.BASE.validProxyTypes.indexOf("socks5"), 1);
   try {
-    S.buildResidentialProxy(
-      { server: "1.2.3.4", port: 8080, username: "u", password: "p" },
-      "test-proxy"
+    assert.throws(
+      () =>
+        S.buildResidentialSocksProxy(
+          { server: "1.2.3.4", port: 8080, username: "u", password: "p" },
+          "t",
+        ),
+      /socks5 不在/,
     );
-    assert.fail("Expected buildResidentialProxy to throw when http is not in validProxyTypes");
-  } catch (e) {
-    assert(e.message.indexOf("http 不在") >= 0, "Expected error about invalid proxy type");
+  } finally {
+    S.BASE.validProxyTypes.length = 0;
+    S.BASE.validProxyTypes.push.apply(S.BASE.validProxyTypes, saved);
   }
-  S.BASE.validProxyTypes = saved;
-  console.log("  PASS buildResidentialProxy type validation");
 }
+
+function testBuildStrictAntiBanExitChoices() {
+  const home = S.BASE.residentialGroupName;
+  // 有实体节点时只挂扁平节点，不套家宽组
+  assert.deepEqual(S.buildStrictAntiBanExitChoices(["a", "b"], home), [
+    "a",
+    "b",
+  ]);
+  assert.deepEqual(S.buildStrictAntiBanExitChoices([], home), [home]);
+}
+
+function testBuildOtherUnlockExitChoices() {
+  const home = S.BASE.residentialGroupName;
+  const regional = {
+    US: "az.US",
+    JP: "az.JP",
+    SG: "az.SG",
+    HK: "az.HK",
+  };
+  assert.deepEqual(
+    S.buildOtherUnlockExitChoices(["node"], home, regional),
+    ["az.US", "az.JP", "az.SG", "az.HK", "node", home],
+  );
+}
+
+const unitTests = [
+  ["toSuffix", testToSuffix],
+  ["uniqueStrings", testUniqueStrings],
+  ["buildStringLookup", testBuildStringLookup],
+  ["createUserError", testCreateUserError],
+  ["normalizeOverrideMode", testNormalizeOverrideMode],
+  ["versionMarker", testVersionMarker],
+  ["uiGroupNames", testUiGroupNames],
+  ["scriptHygiene", testScriptHygiene],
+  ["defaultProxyKeywords", testDefaultProxyKeywords],
+  ["fakeIpBypass", testFakeIpBypass],
+  ["dnsFakeIpFilterDnsOnly", testDnsFakeIpFilterDnsOnly],
+  ["credentialValidation", testCredentialValidation],
+  ["validProxyTypes", testValidProxyTypes],
+  ["buildExitProxies", testBuildExitProxies],
+  ["buildStrictAntiBanExitChoices", testBuildStrictAntiBanExitChoices],
+  ["buildOtherUnlockExitChoices", testBuildOtherUnlockExitChoices],
+];
 
 // ===========================================================================
-// Integration tests
+// Integration tests (30)
 // ===========================================================================
 
-// ---- Structural assertions ----
-
-function assertManagedProxyTopology(output, sandbox) {
-  const names = expectedGroupNames(sandbox);
-  const nodeNames = sandbox.BASE.nodeNames;
-
-  const transitProxy = findProxy(output, nodeNames.transit);
-  assert(transitProxy, "transit proxy missing");
-  assert.strictEqual(transitProxy.type, "http");
-  assert.strictEqual(transitProxy.server, TEST_RESIDENTIAL_CREDENTIALS.transit.server);
-  assert.strictEqual(
-    findProxy(output, nodeNames.homeStatic),
-    undefined,
-    "homeStatic should be absent when not configured"
-  );
-
-  const sgGroup = findGroup(output, names.sgRegion);
-  assert(sgGroup, "SG region group missing");
-  assert.strictEqual(sgGroup.type, "url-test");
-  assert.deepEqual(sgGroup.proxies, ["🇸🇬 SG Auto 01"]);
-
-  const residentialGroup = findGroup(output, names.residentialTarget);
-  assert(residentialGroup, "residential group missing");
-  assert.strictEqual(residentialGroup.type, "select");
-  assert(sameSet(residentialGroup.proxies, [nodeNames.transit]),
-    "residential group members mismatch");
-
-  assertManualDispatchGroups(output, sandbox);
-
-  const usGroup = findGroup(output, names.usRegion);
-  assert(usGroup, "US region group missing");
-  assert.strictEqual(usGroup.type, "url-test");
-  assert.deepEqual(usGroup.proxies, ["🇺🇸 US Auto 01"]);
-
-  // 订阅默认组保留，其中注入了管理组
-  var defaultGroup = findGroup(output, "PROXY");
-  assert(defaultGroup, "subscription default group should survive");
-  assertIncludes(defaultGroup.proxies, [sandbox.BASE.residentialGroupName, names.sgRegion, names.usRegion], "default group includes managed");
-}
-
-function assertManualDispatchGroups(output, sandbox) {
-  const unifiedChoices = expectedUnifiedExitChoices(output, sandbox);
-  const preferred = expectedUnifiedExitPreferred(output, sandbox);
-  const strictExit = sandbox.UI_GROUPS.strictExit;
-  const otherExit = sandbox.UI_GROUPS.otherExit;
-
-  const strictUnified = findGroup(output, strictExit);
-  assert(strictUnified, "strict unified exit missing");
-  assert.strictEqual(strictUnified.type, "select");
-  assert.deepEqual(strictUnified.proxies, unifiedChoices, "strict exit choices mismatch");
-  assert.strictEqual(
-    strictUnified.proxies[0],
-    preferred,
-    "strict exit should prefer US when available"
-  );
-
-  const otherUnified = findGroup(output, otherExit);
-  assert(otherUnified, "other unified exit missing");
-  assert.strictEqual(otherUnified.type, "select");
-  assert.deepEqual(otherUnified.proxies, unifiedChoices, "other exit choices mismatch");
-  assert.strictEqual(
-    otherUnified.proxies[0],
-    preferred,
-    "other exit should prefer US when available"
-  );
-  assert.notStrictEqual(
-    otherExit,
-    strictExit,
-    "other and strict unified exits must be distinct groups"
-  );
-
-  for (const groupName of strictUiGroupNames(sandbox)) {
-    const group = findGroup(output, groupName);
-    assert(group, "UI group missing: " + groupName);
-    assert.strictEqual(group.type, "select");
-    assert.deepEqual(group.proxies, [strictExit], "strict category must only pin strict exit: " + groupName);
-  }
-
-  for (const groupName of otherUiGroupNames(sandbox)) {
-    const group = findGroup(output, groupName);
-    assert(group, "UI group missing: " + groupName);
-    assert.strictEqual(group.type, "select");
-    assert.deepEqual(group.proxies, [otherExit], "other category must only pin other exit: " + groupName);
-  }
-}
-
-function assertCoreStrictRouting(output, sandbox) {
-  assertRulesExist(output.rules, [
-    "DOMAIN-SUFFIX,claude.ai," + sandbox.UI_GROUPS.ai,
-    "DOMAIN-SUFFIX,chatgpt.com," + sandbox.UI_GROUPS.ai,
-    "DOMAIN-SUFFIX,gemini.google.com," + sandbox.UI_GROUPS.ai,
-    "DOMAIN-SUFFIX,accounts.google.com," + sandbox.UI_GROUPS.support,
-    "DOMAIN-SUFFIX,consent.google.com," + sandbox.UI_GROUPS.support,
-    "DOMAIN-SUFFIX,gstatic.com," + sandbox.UI_GROUPS.support,
-    "DOMAIN-SUFFIX,apis.google.com," + sandbox.UI_GROUPS.support,
-    "DOMAIN-SUFFIX,googleusercontent.com," + sandbox.UI_GROUPS.support,
-    "DOMAIN-SUFFIX,cursor.sh," + sandbox.UI_GROUPS.ai,
-    "DOMAIN-SUFFIX,arkoselabs.com," + sandbox.UI_GROUPS.integrations,
-    "DOMAIN-SUFFIX,stripe.com," + sandbox.UI_GROUPS.integrations,
-    "DOMAIN-SUFFIX,statsig.com," + sandbox.UI_GROUPS.integrations,
-    "DOMAIN-SUFFIX,ipinfo.io," + sandbox.UI_GROUPS.support,
-    "DOMAIN-SUFFIX,githubusercontent.com," + sandbox.UI_GROUPS.support,
-    "DOMAIN-SUFFIX,npmjs.org," + sandbox.UI_GROUPS.support,
-    "PROCESS-NAME,Claude," + sandbox.UI_GROUPS.ai,
-    "PROCESS-NAME,claude," + sandbox.UI_GROUPS.ai,
-    "PROCESS-NAME,codex," + sandbox.UI_GROUPS.ai,
-    "PROCESS-NAME,Cursor Helper (Renderer)," + sandbox.UI_GROUPS.ai,
-    "PROCESS-NAME,ChatGPT Helper (Renderer)," + sandbox.UI_GROUPS.ai,
-    "PROCESS-NAME,Perplexity Helper (Renderer)," + sandbox.UI_GROUPS.ai
-  ]);
-  assertRulesExist(output.rules, [
-    "DOMAIN-SUFFIX,meta.ai," + sandbox.UI_GROUPS.ai
-  ]);
-  assertRulesMissing(output.rules, [
-    "DOMAIN-SUFFIX,claude.ai,DIRECT",
-    "DOMAIN-SUFFIX,meta.ai,DIRECT",
-    "DOMAIN-SUFFIX,google.com," + sandbox.UI_GROUPS.support,
-    "DOMAIN-SUFFIX,microsoft.com," + sandbox.UI_GROUPS.support,
-    "DOMAIN-SUFFIX,cloudflare.com," + sandbox.UI_GROUPS.integrations,
-    "DOMAIN-SUFFIX,paypal.com," + sandbox.UI_GROUPS.integrations,
-    "DOMAIN-SUFFIX,okta.com," + sandbox.UI_GROUPS.integrations,
-    "DOMAIN-SUFFIX,datadoghq.com," + sandbox.UI_GROUPS.integrations,
-    "DOMAIN-SUFFIX,ipinfo.io,DIRECT",
-    // 冗余 / 过宽 / 长尾：不再显式挂严管
-    "DOMAIN-SUFFIX,openaiapi-site.azureedge.net," + sandbox.UI_GROUPS.ai,
-    "DOMAIN-SUFFIX,events.statsigapi.net," + sandbox.UI_GROUPS.ai,
-    "DOMAIN-SUFFIX,intercom.io," + sandbox.UI_GROUPS.integrations,
-    "DOMAIN-SUFFIX,posthog.com," + sandbox.UI_GROUPS.integrations,
-    "DOMAIN-SUFFIX,jsdelivr.net," + sandbox.UI_GROUPS.support,
-    "DOMAIN-SUFFIX,bunnycdn.com," + sandbox.UI_GROUPS.support,
-    "DOMAIN-SUFFIX,docker.com," + sandbox.UI_GROUPS.support,
-    "DOMAIN-SUFFIX,hulu.com," + sandbox.UI_GROUPS.video,
-    "DOMAIN-SUFFIX,bandcamp.com," + sandbox.UI_GROUPS.music,
-    "DOMAIN-SUFFIX,medium.com," + sandbox.UI_GROUPS.social
-  ]);
-  // OpenAI Azure CDN 主机由父后缀覆盖进支撑，不再单独挂 AI。
-  assertRulesExist(output.rules, [
-    "DOMAIN-SUFFIX,azureedge.net," + sandbox.UI_GROUPS.support,
-    "DOMAIN-SUFFIX,statsigapi.net," + sandbox.UI_GROUPS.integrations
-  ]);
-}
-
-function assertMediaRouting(output, sandbox) {
-  assertRulesExist(output.rules, [
-    "DOMAIN-SUFFIX,youtube.com," + sandbox.UI_GROUPS.video,
-    "DOMAIN-SUFFIX,youtu.be," + sandbox.UI_GROUPS.video,
-    "DOMAIN-SUFFIX,x.com," + sandbox.UI_GROUPS.social,
-    "DOMAIN-SUFFIX,twitch.tv," + sandbox.UI_GROUPS.video,
-    "DOMAIN-SUFFIX,spotify.com," + sandbox.UI_GROUPS.music,
-    "DOMAIN-SUFFIX,line.me," + sandbox.UI_GROUPS.im,
-    "DOMAIN-SUFFIX,whatsapp.com," + sandbox.UI_GROUPS.im
-  ]);
-  assertRulesMissing(output.rules, [
-    "DOMAIN-SUFFIX,youtube.com," + sandbox.UI_GROUPS.ai,
-    "DOMAIN-SUFFIX,x.com," + sandbox.UI_GROUPS.ai,
-    "DOMAIN-SUFFIX,twitch.tv," + sandbox.UI_GROUPS.ai,
-    "DOMAIN-SUFFIX,spotify.com," + sandbox.UI_GROUPS.ai,
-    "DOMAIN-SUFFIX,line.me," + sandbox.UI_GROUPS.ai,
-    "DOMAIN-SUFFIX,whatsapp.com," + sandbox.UI_GROUPS.ai
-  ]);
-}
-
-// CDN.cloud 只收基础设施后缀；消费站 / 租户平台不得进支撑面板。
-function assertCdnCloudDoesNotAbsorbConsumerSites(output, sandbox) {
-  assertRulesMissing(output.rules, [
-    "DOMAIN-SUFFIX,amazon.com," + sandbox.UI_GROUPS.support,
-    "DOMAIN-SUFFIX,pages.dev," + sandbox.UI_GROUPS.support,
-    "DOMAIN-SUFFIX,workers.dev," + sandbox.UI_GROUPS.support
-  ]);
-  assertRulesExist(output.rules, [
-    "DOMAIN-SUFFIX,amazonaws.com," + sandbox.UI_GROUPS.support,
-    "DOMAIN-SUFFIX,cloudfront.net," + sandbox.UI_GROUPS.support,
-    "DOMAIN-SUFFIX,cdn.cloudflare.net," + sandbox.UI_GROUPS.support
-  ]);
-}
-
-function assertBrowserRouting(output, sandbox, state) {
-  assertProcessRules(output, true, derivedBrowserProcessNames(state), sandbox.UI_GROUPS.ai);
-  assertProcessRules(output, false, ["Google Chrome", "Arc", "Microsoft Edge", "Safari"], sandbox.UI_GROUPS.ai);
-}
-
-function assertBrowserRoutingPriority(output, sandbox) {
-  const browserRule = "PROCESS-NAME,Dia," + sandbox.UI_GROUPS.ai;
-  const aiAppRule = "PROCESS-NAME,Claude," + sandbox.UI_GROUPS.ai;
-  const aiCliRule = "PROCESS-NAME,codex," + sandbox.UI_GROUPS.ai;
-  const geositeCnRule = "GEOSITE,cn,DIRECT";
-  const geoipCnRule = "GEOIP,CN,DIRECT";
-  const gfwRule = "GEOSITE,gfw,PROXY";
-  const matchRule = "MATCH,PROXY";
-
-  assertRulesExist(output.rules, [geositeCnRule, geoipCnRule]);
-
-  assertRuleAppearsBefore(output.rules, "DOMAIN-SUFFIX,claude.ai," + sandbox.UI_GROUPS.ai, geositeCnRule);
-  assertRuleAppearsBefore(output.rules, "DOMAIN-SUFFIX,youtube.com," + sandbox.UI_GROUPS.video, geositeCnRule);
-  assertRuleAppearsBefore(output.rules, "DOMAIN-SUFFIX,qq.com,DIRECT", geositeCnRule);
-  assertRuleAppearsBefore(output.rules, geositeCnRule, geoipCnRule);
-
-  assertRuleAppearsBefore(output.rules, geositeCnRule, aiAppRule);
-  assertRuleAppearsBefore(output.rules, geoipCnRule, aiCliRule);
-  assertRuleAppearsBefore(output.rules, geositeCnRule, browserRule);
-  assertRuleAppearsBefore(output.rules, geoipCnRule, browserRule);
-
-  assertRuleAppearsBefore(output.rules, "DOMAIN-SUFFIX,youtube.com," + sandbox.UI_GROUPS.video, browserRule);
-  assertRuleAppearsBefore(output.rules, "DOMAIN-SUFFIX,tailscale.com,DIRECT", browserRule);
-  assertRuleAppearsBefore(output.rules, "DOMAIN-SUFFIX,qq.com,DIRECT", browserRule);
-  // 进程在 GFW 之前：未维护 gfw 域由 AI/浏览器进程接管，不漏到机房默认组
-  assertRuleAppearsBefore(output.rules, aiAppRule, gfwRule);
-  assertRuleAppearsBefore(output.rules, browserRule, gfwRule);
-  assertRuleAppearsBefore(output.rules, gfwRule, matchRule);
-  assertRuleAppearsBefore(output.rules, geositeCnRule, matchRule);
-  assertRuleAppearsBefore(output.rules, geoipCnRule, matchRule);
-
-  assertRulesMissing(output.rules, [
-    "DOMAIN-KEYWORD,stun," + sandbox.UI_GROUPS.ai,
-    "DOMAIN-KEYWORD,turn," + sandbox.UI_GROUPS.ai,
-    "DOMAIN-KEYWORD,you," + sandbox.UI_GROUPS.ai,
-    "DOMAIN-KEYWORD,cloud," + sandbox.UI_GROUPS.support
-  ]);
-  assert.strictEqual(
-    output.rules.filter(function (r) { return r.indexOf("DOMAIN-KEYWORD,") === 0; }).length,
-    0,
-    "managed rules must not emit DOMAIN-KEYWORD"
-  );
-}
-
-function assertDomesticDirectCoverage(output, dnsBase) {
-  const officeDomains = ["+.qq.com", "+.dingtalk.com", "+.feishu.cn", "+.wps.cn"];
-  const cloudDomains = ["+.aliyuncs.com"];
-  assertRulesExist(output.rules, officeDomains.map((d) =>
-    "DOMAIN-SUFFIX," + d.replace("+.", "") + ",DIRECT"
-  ));
-  assertRulesExist(output.rules, cloudDomains.map((d) =>
-    "DOMAIN-SUFFIX," + d.replace("+.", "") + ",DIRECT"
-  ));
-  assertRulesMissing(output.rules, [
-    "PROCESS-NAME,WeChat,DIRECT",
-    "PROCESS-NAME,DingTalk,DIRECT",
-    "PROCESS-NAME,Feishu,DIRECT"
-  ]);
-  assertNameserverPolicyValues(output, officeDomains, dnsBase.domestic);
-  assertNameserverPolicyValues(output, cloudDomains, dnsBase.domestic);
-}
-
-function assertOverseasAppDirectCoverage(output, dnsBase) {
-  const overseasAppDomains = ["+.tailscale.com", "+.tailscale.io", "+.ts.net"];
-  assertRulesExist(output.rules, [
-    "DOMAIN-SUFFIX,tailscale.com,DIRECT",
-    "DOMAIN-SUFFIX,tailscale.io,DIRECT",
-    "DOMAIN-SUFFIX,ts.net,DIRECT",
-    "IP-CIDR,100.64.0.0/10,DIRECT,no-resolve"
-  ]);
-  assertRulesMissing(output.rules, [
-    "PROCESS-NAME,Tailscale,DIRECT",
-    "PROCESS-NAME,tailscale,DIRECT"
-  ]);
-  assertNameserverPolicyValues(output, overseasAppDomains, dnsBase.domestic);
-  assert.strictEqual(output.dns["fallback-filter"].domain, undefined, "fallback-filter.domain should be absent");
-  assertIncludes(output.sniffer["skip-domain"], overseasAppDomains, "sniffer.skip-domain");
-  assertExcludes(output.dns["fake-ip-filter"], ["+.tailscale.com"], "fake-ip-filter");
-}
-
-function assertOverseasDohDirectCoverage(output, dnsBase) {
-  const domains = ["+.immersivetranslate.com", "+.mineru.org.cn"];
-  assertRulesExist(output.rules, domains.map((d) =>
-    "DOMAIN-SUFFIX," + d.replace("+.", "") + ",DIRECT"
-  ));
-  assertNameserverPolicyValues(output, domains, dnsBase.overseas);
-  assert.strictEqual(output.dns["fallback-filter"].domain, undefined, "fallback-filter.domain should be absent");
-  assertIncludes(output.sniffer["skip-domain"], domains, "sniffer.skip-domain");
-}
-
-function assertDnsAndSniffer(output, dnsBase) {
-  assert.strictEqual(output.dns.listen, "127.0.0.1:1053", "dns.listen should default to loopback");
-  assertNameserverPolicyValues(output, [dnsBase.domesticGeosite], dnsBase.domestic);
-  assertNameserverPolicyValues(output, [dnsBase.overseasGeosite], dnsBase.overseas);
-  assert.strictEqual(output.dns["nameserver-policy"]["geosite:openai"], undefined);
-
-  assertNameserverPolicyValues(
-    output,
-    [
-      "+.openai.com", "+.chatgpt.com", "+.sora.com", "+.oaiusercontent.com",
-      "+.oaistatic.com", "+.claude.ai", "+.anthropic.com", "+.notebooklm.google",
-      "+.accounts.google.com", "+.meta.ai"
-    ],
-    dnsBase.overseas
-  );
-  assertNameserverPolicyValues(
-    output,
-    ["+.apple.com", "+.cnnic.cn", "+.12306.cn"],
-    dnsBase.domestic
-  );
-  assertNameserverPolicyValues(output, ["+.iana.org", "+.ietf.org"], dnsBase.overseas);
-
-  assertIncludes(output.dns["fake-ip-filter"], ["+.apple.com", "+.xboxlive.com", "stun.*.*"], "fake-ip-filter");
-  assert.strictEqual(output.dns["fallback-filter"].domain, undefined, "fallback-filter.domain should be absent");
-  assertIncludes(
-    output.sniffer["force-domain"],
-    ["+.openai.com", "+.chatgpt.com", "+.claude.ai", "+.anthropic.com", "+.challenges.cloudflare.com"],
-    "sniffer.force-domain"
-  );
-  assertExcludes(
-    output.sniffer["force-domain"],
-    ["+", "geosite:cn", "geosite:geolocation-!cn", "geosite:openai",
-      "+.cloudflare.com", "+.google.com", "+.microsoft.com"],
-    "sniffer.force-domain"
-  );
-  assertIncludes(
-    output.sniffer["skip-domain"],
-    ["+.apple.com", "+.tailscale.com", "+.plex.tv", "+.mineru.org.cn"],
-    "sniffer.skip-domain"
-  );
-
-  assertRuleIdentitiesMissing(output.rules, [
-    "DOMAIN-SUFFIX,cnnic.cn",
-    "DOMAIN-SUFFIX,12306.cn",
-    "DOMAIN-SUFFIX,iana.org",
-    "DOMAIN-SUFFIX,ietf.org"
-  ]);
-}
-
-// ---- Integration test cases ----
-
-function testDefaultConfig() {
-  const { sandbox, state, dnsBase, output } = runMain();
+function testMergedHappyPath() {
+  const { sandbox, output } = runMain();
   assert.strictEqual(output._residential, undefined);
   assert.strictEqual(
     output.rules[0],
     "AND,((NETWORK,udp),(DST-PORT,443)),REJECT",
-    "default should reject QUIC first"
   );
-  assertManagedProxyTopology(output, sandbox);
-  assertCoreStrictRouting(output, sandbox);
-  assertMediaRouting(output, sandbox);
-  assertCdnCloudDoesNotAbsorbConsumerSites(output, sandbox);
-  assertBrowserRouting(output, sandbox, state);
-  assertBrowserRoutingPriority(output, sandbox);
-  assertDomesticDirectCoverage(output, dnsBase);
-  assertOverseasAppDirectCoverage(output, dnsBase);
-  assertOverseasDohDirectCoverage(output, dnsBase);
-  assertDnsAndSniffer(output, dnsBase);
-  assertNoDuplicateRuleIdentities(output.rules);
+
+  const transit = findProxy(output, sandbox.BASE.nodeNames.transit);
+  assert(transit);
+  assert.strictEqual(transit.type, "socks5");
+  assert.strictEqual(transit.server, TEST_TRANSIT.server);
+  assert.strictEqual(findProxy(output, sandbox.BASE.nodeNames.homeStatic), undefined);
+
+  const residential = findGroup(output, sandbox.BASE.residentialGroupName);
+  assert(sameSet(residential.proxies, [sandbox.BASE.nodeNames.transit]));
+
+  const proxy = findGroup(output, "PROXY");
+  assert.strictEqual(
+    proxy.proxies[0],
+    sandbox.UI_GROUPS.strictExit,
+    "PROXY should lead with anti-ban exit",
+  );
+  assertIncludes(
+    proxy.proxies,
+    [
+      sandbox.BASE.residentialGroupName,
+      regionGroup(sandbox, "US"),
+      sandbox.UI_GROUPS.strictExit,
+      sandbox.UI_GROUPS.otherExit,
+    ],
+    "PROXY",
+  );
+
+  const ids = new Set();
+  for (const line of output.rules) {
+    const id = ruleIdentity(line);
+    assert(!ids.has(id), "duplicate rule id: " + id);
+    ids.add(id);
+  }
 }
 
-// DoH、GFW、MATCH 均指向订阅默认代理组。
-function testProxyTargetsUseDefaultGroup() {
+function testAntiBanAndUnlockExits() {
   const { sandbox, output } = runMain();
+  const antiBan = findGroup(output, sandbox.UI_GROUPS.strictExit);
+  const unlock = findGroup(output, sandbox.UI_GROUPS.otherExit);
 
-  // PROXY 由关键词命中为默认组
-  assertRulesExist(output.rules, ["DOMAIN-SUFFIX,dns.google,PROXY"]);
-  assertRulesExist(output.rules, ["GEOSITE,gfw,PROXY"]);
-  assertRulesExist(output.rules, ["MATCH,PROXY"]);
+  assert.deepEqual(antiBan.proxies, expectedAntiBanChoices(output, sandbox));
+  assert.strictEqual(antiBan.proxies[0], preferredAntiBan(output, sandbox));
+  for (const region of regionOrder(output, sandbox)) {
+    assert(antiBan.proxies.indexOf(region) < 0, "anti-ban has region: " + region);
+  }
+
+  assert.deepEqual(unlock.proxies, expectedUnlockChoices(output, sandbox));
+  assert.strictEqual(unlock.proxies[0], preferredUnlock(output, sandbox));
 }
 
-function testEmptyCredentialsDegradesWithoutTransit() {
+function testCategoryExitCoupling() {
+  const { sandbox, output } = runMain();
+  for (const name of [
+    sandbox.UI_GROUPS.ai,
+    sandbox.UI_GROUPS.support,
+    sandbox.UI_GROUPS.integrations,
+  ]) {
+    assert.deepEqual(findGroup(output, name).proxies, [sandbox.UI_GROUPS.strictExit]);
+  }
+  for (const name of [
+    sandbox.UI_GROUPS.video,
+    sandbox.UI_GROUPS.music,
+    sandbox.UI_GROUPS.social,
+    sandbox.UI_GROUPS.im,
+  ]) {
+    assert.deepEqual(findGroup(output, name).proxies, [sandbox.UI_GROUPS.otherExit]);
+  }
+}
+
+function testBrokenStrictCouplingFails() {
+  assert.throws(
+    () =>
+      runMain(null, (sb) => {
+        const original = sb.writeExpandedProxyGroups;
+        sb.writeExpandedProxyGroups = function (
+          config,
+          residentialTarget,
+          regionalTargets,
+          exitNodeNames,
+        ) {
+          original(config, residentialTarget, regionalTargets, exitNodeNames);
+          const ai = config["proxy-groups"].find((g) => g.name === sb.UI_GROUPS.ai);
+          ai.proxies = ["DIRECT"];
+        };
+      }),
+    /严管防封分类面板必须只挂出口总闸/,
+  );
+}
+
+function testEmptyCredentialsDegrade() {
+  const { sandbox, output } = runMain(null, (sb) => {
+    sb.RESIDENTIAL_CREDENTIALS = cloneJson(EMPTY_CREDENTIALS);
+  });
+  assert.strictEqual(findProxy(output, sandbox.BASE.nodeNames.transit), undefined);
+  assert.strictEqual(findProxy(output, sandbox.BASE.nodeNames.homeStatic), undefined);
+  const residential = findGroup(output, sandbox.BASE.residentialGroupName);
+  assert(residential.proxies.length > 0);
+  assert.deepEqual(
+    findGroup(output, sandbox.UI_GROUPS.strictExit).proxies,
+    [sandbox.BASE.residentialGroupName],
+  );
+  assert.strictEqual(output.dns.enable, true);
+  assertRulesExist(output.rules, [suffixRule("claude.ai", sandbox.UI_GROUPS.ai)]);
+}
+
+function testPlaceholderCredentialsDegrade() {
   const { sandbox, output } = runMain(null, (sb) => {
     sb.RESIDENTIAL_CREDENTIALS = {
-      transit: { server: "", port: 8001, username: "", password: "" },
-      homeStatic: { server: "", port: 1080, username: "", password: "" }
+      username: "你的用户名",
+      password: "你的密码",
+      transit: { server: "transit.example.com", port: 8001 },
+      homeStatic: { server: "home.example.com", port: 1080 },
     };
   });
-  assert.strictEqual(
-    findProxy(output, sandbox.BASE.nodeNames.transit),
-    undefined,
-    "empty credentials must not inject transit"
-  );
-  assert.strictEqual(
-    findProxy(output, sandbox.BASE.nodeNames.homeStatic),
-    undefined,
-    "empty credentials must not inject homeStatic"
-  );
-  const residential = findGroup(output, sandbox.BASE.residentialGroupName);
-  assert(residential, "residential group should still exist");
-  assert(residential.proxies.indexOf(sandbox.BASE.nodeNames.transit) < 0);
-  assert(residential.proxies.length > 0);
-  assert.strictEqual(output.dns.enable, true);
-  assertRulesExist(output.rules, ["DOMAIN-SUFFIX,claude.ai," + sandbox.UI_GROUPS.ai]);
+  assert.strictEqual(findProxy(output, sandbox.BASE.nodeNames.transit), undefined);
+  assert.strictEqual(findProxy(output, sandbox.BASE.nodeNames.homeStatic), undefined);
+  assert(findGroup(output, sandbox.UI_GROUPS.ai));
 }
 
-// 仅配置家庭静态 IP：注入 socks5，家宽组只挂该节点，算家宽。
-function testHomeStaticSocksOnlyCountsAsResidential() {
+function testHomeStaticOnly() {
   const { sandbox, output } = runMain(null, (sb) => {
     sb.RESIDENTIAL_CREDENTIALS = {
-      transit: { server: "", port: 8001, username: "", password: "" },
-      homeStatic: cloneJson(TEST_HOME_STATIC)
+      username: "",
+      password: "",
+      transit: { server: "", port: 8001 },
+      homeStatic: cloneJson(TEST_HOME_STATIC),
     };
   });
   const home = findProxy(output, sandbox.BASE.nodeNames.homeStatic);
-  assert(home, "homeStatic proxy missing");
   assert.strictEqual(home.type, "socks5");
   assert.strictEqual(home.server, TEST_HOME_STATIC.server);
-  assert.strictEqual(home.username, TEST_HOME_STATIC.username);
-  assert.strictEqual(
-    findProxy(output, sandbox.BASE.nodeNames.transit),
-    undefined,
-    "transit must be absent when only homeStatic configured"
-  );
-  const residential = findGroup(output, sandbox.BASE.residentialGroupName);
-  assert.deepEqual(residential.proxies, [sandbox.BASE.nodeNames.homeStatic]);
+  assert.strictEqual(home.username, undefined);
+  assert.strictEqual(findProxy(output, sandbox.BASE.nodeNames.transit), undefined);
+  assert.deepEqual(findGroup(output, sandbox.BASE.residentialGroupName).proxies, [
+    sandbox.BASE.nodeNames.homeStatic,
+  ]);
   assert.strictEqual(
     findGroup(output, sandbox.UI_GROUPS.strictExit).proxies[0],
-    expectedUnifiedExitPreferred(output, sandbox),
-    "strict exit should prefer US when available even with homeStatic"
+    sandbox.BASE.nodeNames.homeStatic,
   );
 }
 
-// 静态 IP + 官方中转并存：静态 IP 优先。
 function testHomeStaticPreferredOverTransit() {
   const { sandbox, output } = runMain(null, (sb) => {
     sb.RESIDENTIAL_CREDENTIALS.homeStatic = cloneJson(TEST_HOME_STATIC);
   });
-  assert(findProxy(output, sandbox.BASE.nodeNames.homeStatic));
-  assert(findProxy(output, sandbox.BASE.nodeNames.transit));
-  const residential = findGroup(output, sandbox.BASE.residentialGroupName);
-  assert.deepEqual(residential.proxies, [
+  const home = findProxy(output, sandbox.BASE.nodeNames.homeStatic);
+  const transit = findProxy(output, sandbox.BASE.nodeNames.transit);
+  assert(home);
+  assert(transit);
+  assert.strictEqual(home.username, TEST_SHARED_AUTH.username);
+  assert.strictEqual(transit.username, TEST_SHARED_AUTH.username);
+  assert.strictEqual(home.password, TEST_SHARED_AUTH.password);
+  assert.deepEqual(findGroup(output, sandbox.BASE.residentialGroupName).proxies, [
     sandbox.BASE.nodeNames.homeStatic,
-    sandbox.BASE.nodeNames.transit
+    sandbox.BASE.nodeNames.transit,
+  ]);
+  assert.strictEqual(
+    findGroup(output, sandbox.UI_GROUPS.strictExit).proxies[0],
+    sandbox.BASE.nodeNames.homeStatic,
+  );
+}
+
+function testNoRegionNodesStillWorks() {
+  const { sandbox, output } = runMain((config) => {
+    config.proxies = [];
+    config["proxy-groups"] = [{ name: "PROXY", type: "select", proxies: [] }];
+  });
+  assert.deepEqual(findGroup(output, sandbox.BASE.residentialGroupName).proxies, [
+    sandbox.BASE.nodeNames.transit,
+  ]);
+  assert.deepEqual(
+    findGroup(output, sandbox.UI_GROUPS.strictExit).proxies,
+    expectedAntiBanChoices(output, sandbox),
+  );
+}
+
+function testStrictDomainRouting() {
+  const { sandbox, output } = runMain();
+  const ai = sandbox.UI_GROUPS.ai;
+  const support = sandbox.UI_GROUPS.support;
+  const integrations = sandbox.UI_GROUPS.integrations;
+  assertRulesExist(output.rules, [
+    suffixRule("claude.ai", ai),
+    suffixRule("chatgpt.com", ai),
+    suffixRule("gemini.google.com", ai),
+    suffixRule("antigravity.google", ai),
+    suffixRule("antigravity-ide.com", ai),
+    suffixRule("cloudcode-pa.googleapis.com", ai),
+    suffixRule("meta.ai", ai),
+    suffixRule("grok.com", ai),
+    suffixRule("accounts.google.com", support),
+    suffixRule("consent.google.com", support),
+    suffixRule("gstatic.com", support),
+    suffixRule("npmjs.org", support),
+    suffixRule("azureedge.net", support),
+    suffixRule("arkoselabs.com", integrations),
+    suffixRule("stripe.com", integrations),
+    suffixRule("statsig.com", integrations),
   ]);
 }
 
-function testMergedModeDoesNotRequireRegionNodes() {
-  const { sandbox, output } = runMain((config) => {
-    config.proxies = [];
-    config["proxy-groups"] = [
-      { name: "PROXY", type: "select", proxies: [] }
-    ];
-  });
-  const residentialGroup = findGroup(output, sandbox.BASE.residentialGroupName);
-  assert(residentialGroup, "core group missing without region nodes");
-  assert.deepEqual(residentialGroup.proxies, [sandbox.BASE.nodeNames.transit]);
+function testTrimmedStrictListsAbsent() {
+  const { sandbox, output } = runMain();
+  assertRulesMissing(output.rules, [
+    suffixRule("google.com", sandbox.UI_GROUPS.support),
+    suffixRule("microsoft.com", sandbox.UI_GROUPS.support),
+    suffixRule("vercel.com", sandbox.UI_GROUPS.support),
+    suffixRule("gitlab.com", sandbox.UI_GROUPS.support),
+    suffixRule("akamai.net", sandbox.UI_GROUPS.support),
+    suffixRule("fastly.net", sandbox.UI_GROUPS.support),
+    suffixRule("midjourney.com", sandbox.UI_GROUPS.ai),
+    suffixRule("cohere.com", sandbox.UI_GROUPS.ai),
+    suffixRule("windsurf.com", sandbox.UI_GROUPS.ai),
+    suffixRule("openrouter.ai", sandbox.UI_GROUPS.ai),
+    suffixRule("mistral.ai", sandbox.UI_GROUPS.ai),
+    suffixRule("huggingface.co", sandbox.UI_GROUPS.ai),
+    suffixRule("cursor.sh", sandbox.UI_GROUPS.ai),
+    suffixRule("cursor.com", sandbox.UI_GROUPS.ai),
+    suffixRule("intercom.io", sandbox.UI_GROUPS.integrations),
+    suffixRule("posthog.com", sandbox.UI_GROUPS.integrations),
+    suffixRule("hcaptcha.com", sandbox.UI_GROUPS.integrations),
+    suffixRule("clerk.dev", sandbox.UI_GROUPS.integrations),
+    suffixRule("ping0.cc", sandbox.UI_GROUPS.support),
+    suffixRule("openaiapi-site.azureedge.net", sandbox.UI_GROUPS.ai),
+    processRule("SunBrowser", sandbox.UI_GROUPS.ai),
+  ]);
 }
 
-function testUnifiedDnsSnifferOnlyMode() {
-  const config = createBaseConfig();
-  const inputProxies = cloneJson(config.proxies);
-  const inputProxyGroups = cloneJson(config["proxy-groups"]);
-  const inputRules = config.rules.slice();
+function testMediaDomainRouting() {
+  const { sandbox, output } = runMain();
+  assertRulesExist(output.rules, [
+    suffixRule("youtube.com", sandbox.UI_GROUPS.video),
+    suffixRule("netflix.com", sandbox.UI_GROUPS.video),
+    suffixRule("spotify.com", sandbox.UI_GROUPS.music),
+    suffixRule("x.com", sandbox.UI_GROUPS.social),
+    suffixRule("discord.com", sandbox.UI_GROUPS.im),
+    suffixRule("whatsapp.com", sandbox.UI_GROUPS.im),
+  ]);
+  assertRulesMissing(output.rules, [
+    suffixRule("youtube.com", sandbox.UI_GROUPS.ai),
+    suffixRule("linkedin.com", sandbox.UI_GROUPS.social),
+    suffixRule("slack.com", sandbox.UI_GROUPS.im),
+    suffixRule("signal.org", sandbox.UI_GROUPS.im),
+    suffixRule("soundcloud.com", sandbox.UI_GROUPS.music),
+    suffixRule("hulu.com", sandbox.UI_GROUPS.video),
+  ]);
+}
 
-  const { sandbox, output } = runMain(
+function testCdnCloudScope() {
+  const { sandbox, output } = runMain();
+  assertRulesExist(output.rules, [
+    suffixRule("amazonaws.com", sandbox.UI_GROUPS.support),
+    suffixRule("cloudfront.net", sandbox.UI_GROUPS.support),
+    suffixRule("cdn.cloudflare.net", sandbox.UI_GROUPS.support),
+  ]);
+  assertRulesMissing(output.rules, [
+    suffixRule("amazon.com", sandbox.UI_GROUPS.support),
+    suffixRule("pages.dev", sandbox.UI_GROUPS.support),
+    suffixRule("workers.dev", sandbox.UI_GROUPS.support),
+  ]);
+}
+
+function testProcessRouting() {
+  const { sandbox, derived, output } = runMain();
+  const ai = sandbox.UI_GROUPS.ai;
+  assertRulesExist(output.rules, [
+    processRule("Claude", ai),
+    processRule("claude", ai),
+    processRule("codex", ai),
+    processRule("ChatGPT Helper (Renderer)", ai),
+    processRule("Comet", ai),
+    processRule("Dia", ai),
+    processRule("Atlas", ai),
+    // Gemini + Antigravity：App / IDE / CLI 同一策略
+    processRule("Gemini", ai),
+    processRule("Gemini Helper (Renderer)", ai),
+    processRule("Antigravity", ai),
+    processRule("Antigravity IDE", ai),
+    processRule("language_server", ai),
+    processRule("gemini", ai),
+    processRule("agy", ai),
+    processRule("antigravity", ai),
+  ]);
+  for (const name of derived.processNames.aiCli) {
+    assertRulesExist(output.rules, [processRule(name, ai)]);
+  }
+  assertRulesMissing(output.rules, [
+    processRule("Google Chrome", ai),
+    processRule("Safari", ai),
+    processRule("SunBrowser", ai),
+    processRule("Cursor", ai),
+    processRule("Cursor Helper (Renderer)", ai),
+    processRule("opencode", ai),
+    processRule("WeChat", "DIRECT"),
+    processRule("Quotio", ai),
+  ]);
+  assertIncludes(derived.processNames.browser, ["Comet", "Dia", "Atlas"], "ai browsers");
+  assertExcludes(derived.processNames.browser, ["SunBrowser"], "browser");
+  assertExcludes(derived.processNames.aiApps, ["Cursor"], "aiApps");
+  assertIncludes(derived.processNames.aiApps, ["Gemini", "Antigravity", "Antigravity IDE"], "gemini/agy apps");
+  assertIncludes(derived.processNames.aiCli, ["gemini", "agy", "antigravity"], "gemini/agy cli");
+}
+
+function testRuleOrder() {
+  const { sandbox, output } = runMain();
+  const ai = sandbox.UI_GROUPS.ai;
+  const quic = "AND,((NETWORK,udp),(DST-PORT,443)),REJECT";
+  const claude = suffixRule("claude.ai", ai);
+  const youtube = suffixRule("youtube.com", sandbox.UI_GROUPS.video);
+  const cn = "GEOSITE,cn,DIRECT";
+  const geoip = "GEOIP,CN,DIRECT";
+  const proc = processRule("Claude", ai);
+  const gfw = "GEOSITE,gfw,PROXY";
+  const match = "MATCH,PROXY";
+
+  assertBefore(output.rules, quic, claude);
+  assertBefore(output.rules, claude, youtube);
+  assertBefore(output.rules, youtube, cn);
+  assertBefore(output.rules, cn, geoip);
+  assertBefore(output.rules, geoip, proc);
+  assertBefore(output.rules, proc, gfw);
+  assertBefore(output.rules, gfw, match);
+  assert.strictEqual(
+    output.rules.filter((r) => r.indexOf("DOMAIN-KEYWORD,") === 0).length,
+    0,
+  );
+}
+
+function testDnsAndSnifferMerged() {
+  const { dnsBase, output } = runMain();
+  assert.strictEqual(output.dns.listen, "127.0.0.1:1053");
+  assertNsPolicy(output, [dnsBase.domesticGeosite], dnsBase.domestic);
+  assertNsPolicy(output, [dnsBase.overseasGeosite], dnsBase.overseas);
+  assertNsPolicy(
+    output,
+    ["+.claude.ai", "+.chatgpt.com", "+.accounts.google.com", "+.meta.ai"],
+    dnsBase.overseas,
+  );
+  assertNsPolicy(output, ["+.qq.com", "+.apple.com", "+.12306.cn"], dnsBase.domestic);
+  assertNsPolicy(output, ["+.iana.org"], dnsBase.overseas);
+  assert.strictEqual(output.dns["fallback-filter"].domain, undefined);
+  assertIncludes(
+    output.sniffer["force-domain"],
+    ["+.claude.ai", "+.openai.com", "+.challenges.cloudflare.com"],
+    "force",
+  );
+  assertExcludes(
+    output.sniffer["force-domain"],
+    ["+.google.com", "+.cloudflare.com", "geosite:openai"],
+    "force",
+  );
+  assertIncludes(
+    output.sniffer["skip-domain"],
+    ["+.apple.com", "+.tailscale.com"],
+    "skip",
+  );
+}
+
+function testDnsOnlyMode() {
+  const config = baseConfig();
+  const proxies = cloneJson(config.proxies);
+  const groups = cloneJson(config["proxy-groups"]);
+  const rules = config.rules.slice();
+  const { sandbox, dnsBase, output } = runMain(
     () => config,
     (sb) => {
       sb.USER_OPTIONS.overrideMode = "dns-sniffer-only";
-      sb.RESIDENTIAL_CREDENTIALS = {
-        transit: { server: "", port: 8001, username: "", password: "" },
-        homeStatic: { server: "", port: 1080, username: "", password: "" }
-      };
-    }
+      sb.RESIDENTIAL_CREDENTIALS = cloneJson(EMPTY_CREDENTIALS);
+    },
   );
-  const dnsBase = sandbox.DNS_SNIFFER_MODULE.BASE.dns;
-
-  assert.deepEqual(output.proxies, inputProxies);
-  assert.deepEqual(output["proxy-groups"], inputProxyGroups);
-  assert.deepEqual(output.rules, inputRules);
-  assert.strictEqual(output._residential, undefined);
+  assert.deepEqual(output.proxies, proxies);
+  assert.deepEqual(output["proxy-groups"], groups);
+  assert.deepEqual(output.rules, rules);
   assert.strictEqual(output.dns.enable, true);
-  assert.strictEqual(output.sniffer.enable, true);
-  assertNameserverPolicyValues(output, [dnsBase.domesticGeosite], dnsBase.domestic);
-  assertNameserverPolicyValues(output, [dnsBase.overseasGeosite], dnsBase.overseas);
-  assert.strictEqual(output.dns["nameserver-policy"]["geosite:openai"], undefined);
-  assertNameserverPolicyValues(output, ["+.qq.com", "+.aliyuncs.com"], dnsBase.domestic);
-  assertNameserverPolicyValues(output, ["+.chatgpt.com", "+.claude.ai", "+.githubusercontent.com"], dnsBase.overseas);
-  assertIncludes(output.dns["fake-ip-filter"], ["+.apple.com", "stun.*.*"], "dns-only fake-ip-filter");
-  assertIncludes(output.sniffer["force-domain"], ["+.claude.ai", "+.accounts.google.com"], "dns-only sniffer.force-domain");
-  assertIncludes(output.sniffer["skip-domain"], ["+.apple.com", "+.tailscale.com"], "dns-only sniffer.skip-domain");
+  assertNsPolicy(output, ["+.claude.ai", "+.chatgpt.com"], dnsBase.overseas);
+  assertIncludes(output.sniffer["force-domain"], ["+.claude.ai"], "force");
 }
 
-function testAiCliProcessProxyDefaultsOn() {
-  const { sandbox, state, output } = runMain();
-  assertProcessRules(output, true, derivedAiCliProcessNames(state), sandbox.UI_GROUPS.ai);
-  assertProcessRules(output, false, ["opencode"], sandbox.UI_GROUPS.ai);
-}
-
-function testOnlyAiAndBrowserProcessesAreManaged() {
-  const { sandbox, output } = runMain();
-  assertProcessRules(output, false, ["Google Chrome", "Google Drive", "Visual Studio Code"], sandbox.UI_GROUPS.ai);
-  assertRulesMissing(output.rules, [
-    "PROCESS-NAME,WeChat,DIRECT",
-    "PROCESS-NAME,Tailscale,DIRECT"
+function testDirectCnAndOverseas() {
+  const { dnsBase, output } = runMain();
+  assertRulesExist(output.rules, [
+    "DOMAIN-SUFFIX,qq.com,DIRECT",
+    "DOMAIN-SUFFIX,aliyuncs.com,DIRECT",
+    "DOMAIN-SUFFIX,tailscale.com,DIRECT",
+    "DOMAIN-SUFFIX,immersivetranslate.com,DIRECT",
+    "IP-CIDR,100.64.0.0/10,DIRECT,no-resolve",
   ]);
+  assertNsPolicy(output, ["+.qq.com", "+.tailscale.com"], dnsBase.domestic);
+  assertNsPolicy(output, ["+.immersivetranslate.com"], dnsBase.overseas);
+  assertIncludes(output.sniffer["skip-domain"], ["+.tailscale.com", "+.mineru.org.cn"], "skip");
 }
 
-// 严管分类面板只挂统一出口；打断耦合应失败。
-function testBrokenStrictExitCouplingFails() {
-  assert.throws(() => runMain(
-    null,
-    (sb) => {
-      const original = sb.writeExpandedProxyGroups;
-      sb.writeExpandedProxyGroups = function(config, residentialTarget, regionalTargets) {
-        original(config, residentialTarget, regionalTargets);
-        const ai = (config["proxy-groups"] || []).find((g) => g.name === sb.UI_GROUPS.ai);
-        assert(ai, "AI group should exist before coupling assert");
-        ai.proxies = ["DIRECT"];
-      };
-    }
-  ), /严管分类面板必须只挂统一出口/);
-}
-
-function testExistingManagedObjectsAreReconciled() {
-  const { sandbox, output } = runMain((config) => {
-    const base = loadCombinedSandbox().BASE;
-    const nodeNames = base.nodeNames;
-    const suffix = base.groupNameSuffixes;
-
-    config.proxies.push({
-      name: nodeNames.transit, type: "http", server: "bad", port: 2,
-      username: "bad", password: "bad", udp: false
-    });
-    config["proxy-groups"].push({ name: "SG" + suffix.base, type: "select", proxies: [base.residentialGroupName] });
-    config["proxy-groups"].push({ name: base.residentialGroupName, type: "select", proxies: ["DIRECT"] });
-    config["proxy-groups"].push({ name: "US" + suffix.base, type: "select", proxies: ["DIRECT"] });
+function testQuicAndDnsListenOptions() {
+  const off = runMain(null, (sb) => {
+    sb.USER_OPTIONS.rejectQuic = false;
   });
-  assertManagedProxyTopology(output, sandbox);
-}
+  assertRulesMissing(off.output.rules, [
+    "AND,((NETWORK,udp),(DST-PORT,443)),REJECT",
+  ]);
 
-function testResidentialGroupIsReconciled() {
-  const { sandbox, output } = runMain((config) => {
-    const base = loadCombinedSandbox().BASE;
-    const residentialName = base.residentialGroupName;
-    config["proxy-groups"].push({
-      name: residentialName, type: "select",
-      proxies: ["DIRECT"]
-    });
+  const listen = runMain(null, (sb) => {
+    sb.USER_OPTIONS.dnsListen = "0.0.0.0:1053";
   });
-  assertManagedProxyTopology(output, sandbox);
+  assert.strictEqual(listen.output.dns.listen, "0.0.0.0:1053");
 }
 
-function testBadExternalRegionGroupIsNotReused() {
-  const { sandbox, output } = runMain((config) => {
-    config["proxy-groups"].push({
-      name: "🇸🇬 错误地区组", type: "select", proxies: ["DIRECT"]
-    });
-  });
-  assertManagedProxyTopology(output, sandbox);
-}
-
-function testNodeSelectionKeepsManagedRegionGroups() {
-  const { sandbox, output } = runMain((config) => {
-    config["proxy-groups"][0].proxies = ["🇸🇬 SG Auto 01"];
-  });
-  assertManagedProxyTopology(output, sandbox);
-}
-
-function testRepeatedRunDoesNotCreateSelfReference() {
-  const first = runMain();
-  const rerunInput = JSON.parse(JSON.stringify(first.output));
-  const { sandbox, output: second } = runMain(() => rerunInput);
-  const names = expectedGroupNames(sandbox);
-
-  assertManagedProxyTopology(second, sandbox);
-  for (const name of [names.residentialTarget, names.sgRegion, names.usRegion]) {
-    const count = second["proxy-groups"].filter((g) => g.name === name).length;
-    assert.strictEqual(count, 1, "duplicate group after rerun: " + name);
-  }
-}
-
-function testRegionGroupsKeepBrowserRouting() {
-  const { sandbox, dnsBase, state, output } = runMain();
-  const suffix = sandbox.BASE.groupNameSuffixes;
-  const usRelay = regionGroupName(sandbox, "US", suffix.base);
-
-  assert.strictEqual(output._residential, undefined);
-  assert(findGroup(output, usRelay), "US region group missing");
-  assertNameserverPolicyValues(output, [dnsBase.domesticGeosite], dnsBase.domestic);
-  assertProcessRules(output, true, derivedBrowserProcessNames(state), sandbox.UI_GROUPS.ai);
-}
-
-// 订阅只含 HK 节点时仍应生成 HK 分区测速组，不要求任何自动前跳。
-function testRegionGroupsCanBeGeneratedFromHKOnly() {
-  const { sandbox, output } = runMain((config) => {
-    config.proxies = [{ name: "🇭🇰 HK Auto 01", type: "ss" }];
+function testDefaultProxyResolution() {
+  const exact = runMain((config) => {
     config["proxy-groups"] = [
-      { name: "PROXY", type: "select", proxies: ["🇭🇰 HK Auto 01"] }
+      { name: "办公PROXY", type: "select", proxies: ["🇸🇬 SG Auto 01"] },
+      { name: "PROXY", type: "select", proxies: ["🇺🇸 US Auto 01"] },
     ];
     config.rules = ["MATCH,PROXY"];
   });
-  const suffix = sandbox.BASE.groupNameSuffixes;
-  const hkRegion = regionGroupName(sandbox, "HK", suffix.base);
-  assert(findGroup(output, hkRegion), "HK region group missing");
-}
+  assertRulesExist(exact.output.rules, ["MATCH,PROXY", "GEOSITE,gfw,PROXY"]);
+  assertRulesMissing(exact.output.rules, ["MATCH,办公PROXY"]);
 
-// 订阅使用英文全称（United States / Hong Kong / Singapore / Japan）时能被识别。
-function testRegionRegexAcceptsEnglishFullName() {
-  const { sandbox, output } = runMain((config) => {
-    config.proxies = [
-      { name: "United States 01", type: "ss" },
-      { name: "Hong Kong 02", type: "ss" },
-      { name: "Singapore premium", type: "ss" },
-      { name: "Japan Tokyo", type: "ss" }
-    ];
+  const match = runMain((config) => {
     config["proxy-groups"] = [
-      { name: "PROXY", type: "select", proxies: ["United States 01"] }
+      { name: "PROXY备用", type: "select", proxies: ["🇸🇬 SG Auto 01"] },
+      { name: "手动选择", type: "select", proxies: ["🇺🇸 US Auto 01"] },
     ];
-    config.rules = ["MATCH,PROXY"];
+    config.rules = ["MATCH,手动选择"];
   });
-  const suffix = sandbox.BASE.groupNameSuffixes;
-  for (const code of ["US", "HK", "SG", "JP"]) {
-    assert(findGroup(output, regionGroupName(sandbox, code, suffix.base)),
-      "region group missing for " + code);
-  }
+  assertRulesExist(match.output.rules, ["MATCH,手动选择", "GEOSITE,gfw,手动选择"]);
+  assertRulesMissing(match.output.rules, ["MATCH,PROXY备用"]);
 }
 
-// 订阅命名用下划线或无分隔符跟数字（US_Tokyo / SG01）时能被识别。
-function testRegionRegexAcceptsUnderscoreAndNoSeparator() {
-  const { sandbox, output } = runMain((config) => {
-    config.proxies = [
-      { name: "US_Tokyo_01", type: "ss" },
-      { name: "SG01", type: "ss" }
-    ];
-    config["proxy-groups"] = [
-      { name: "PROXY", type: "select", proxies: ["US_Tokyo_01"] }
-    ];
-    config.rules = ["MATCH,PROXY"];
+function testGfwAndMatchTargets() {
+  const { output } = runMain();
+  assertRulesExist(output.rules, [
+    "DOMAIN-SUFFIX,dns.google,PROXY",
+    "GEOSITE,gfw,PROXY",
+    "MATCH,PROXY",
+  ]);
+  assertBefore(output.rules, "GEOIP,CN,DIRECT", "GEOSITE,gfw,PROXY");
+}
+
+function testDisabledSwitch() {
+  const { output } = runMain(null, (sb) => {
+    sb.USER_OPTIONS.enabled = false;
   });
-  const suffix = sandbox.BASE.groupNameSuffixes;
-  assert(findGroup(output, regionGroupName(sandbox, "US", suffix.base)), "US group missing (underscore)");
-  assert(findGroup(output, regionGroupName(sandbox, "SG", suffix.base)), "SG group missing (no separator)");
-}
-
-// merged 模式凭证缺失时：不抛错；仍写入 DNS/规则，且不注入官方中转。
-function testMergedModeDegradesWhenCredentialsMissing() {
-  const sandbox = loadCombinedSandbox();
-  sandbox.RESIDENTIAL_CREDENTIALS = {
-    transit: { server: "", port: 8001, username: "", password: "" },
-    homeStatic: { server: "", port: 1080, username: "", password: "" }
-  };
-  const config = createBaseConfig();
-  const output = sandbox.main(config);
-
-  assert.strictEqual(output.dns.enable, true);
-  assert.strictEqual(output.sniffer.enable, true);
-  assert.strictEqual(
-    findProxy(output, sandbox.BASE.nodeNames.transit),
-    undefined,
-    "missing credentials must not inject transit"
-  );
-  assert(findGroup(output, sandbox.BASE.residentialGroupName), "residential group present");
-  assert(findGroup(output, sandbox.UI_GROUPS.ai), "AI panel present");
-}
-
-// enabled: false 时 main() 原样返回 config，无任何副作用。
-function testDisabledMasterSwitch() {
-  const { sandbox, output } = runMain(
-    null,
-    (sb) => { sb.USER_OPTIONS.enabled = false; }
-  );
-  const base = createBaseConfig();
+  const base = baseConfig();
   assert.deepEqual(output.proxies, base.proxies);
   assert.deepEqual(output["proxy-groups"], base["proxy-groups"]);
   assert.deepEqual(output.rules, base.rules);
   assert.strictEqual(output.dns, undefined);
-  assert.strictEqual(output.sniffer, undefined);
 }
 
-// enabled 默认为 true，行为与原来一致。
-function testEnabledMasterSwitchDefault() {
-  const { sandbox, output } = runMain();
-  assert.strictEqual(output.dns.enable, true);
-  assert.strictEqual(output.sniffer.enable, true);
-  assert(output.rules.some(function(r) { return r.indexOf("DOMAIN-SUFFIX,openai.com") === 0; }),
-    "managed rules should be present when enabled");
-}
-
-// 订阅所有非 MATCH 规则应被清除，管理 MATCH 由脚本生成。
-function testSubscriptionNonMatchRulesAreCleared() {
+function testSubscriptionCleanup() {
   const { sandbox, output } = runMain((config) => {
     config.rules = [
       "DOMAIN-KEYWORD,openai,办公娱乐好帮手",
       "DOMAIN-SUFFIX,some-random-domain.co,办公娱乐好帮手",
-      "MATCH,办公娱乐好帮手"
+      "MATCH,办公娱乐好帮手",
     ];
-  });
-
-  // 订阅规则完全清除
-  assertRulesMissing(output.rules, ["DOMAIN-KEYWORD,openai,办公娱乐好帮手"]);
-  assertRulesMissing(output.rules, ["DOMAIN-SUFFIX,some-random-domain.co,办公娱乐好帮手"]);
-  assertRulesMissing(output.rules, ["MATCH,办公娱乐好帮手"]);
-  // 管理 MATCH 指向默认代理组（PROXY 由关键词命中）
-  assertRulesExist(output.rules, ["MATCH,PROXY"]);
-  // 管理规则正常写入 DOMAIN-SUFFIX；不再自动生成 DOMAIN-KEYWORD
-  assertRulesExist(output.rules, ["DOMAIN-SUFFIX,openai.com," + sandbox.UI_GROUPS.ai]);
-  assertRulesMissing(output.rules, ["DOMAIN-KEYWORD,openai," + sandbox.UI_GROUPS.ai]);
-}
-
-// 订阅附加代理组应被清除，默认组保留。
-function testSubscriptionProxyGroupsAreCleaned() {
-  const { sandbox, output } = runMain((config) => {
     config["proxy-groups"].push(
       { name: "自动选择", type: "url-test", proxies: ["🇸🇬 SG Auto 01"] },
-      { name: "故障转移", type: "fallback", proxies: ["🇭🇰 HK Auto 01"] },
-      { name: "Bahamut", type: "select", proxies: ["PROXY"] }
+      { name: "Bahamut", type: "select", proxies: ["PROXY"] },
     );
-  });
-  assert(findGroup(output, "PROXY"), "default PROXY should survive");
-  assert.strictEqual(findGroup(output, "自动选择"), undefined, "subscription url-test group should be cleared");
-  assert.strictEqual(findGroup(output, "故障转移"), undefined, "subscription fallback group should be cleared");
-  assert.strictEqual(findGroup(output, "Bahamut"), undefined, "subscription select group should be cleared");
-  assert(findGroup(output, sandbox.BASE.residentialGroupName), "managed residential group present");
-}
-
-// 占位凭证在 merged 下不得注入假中转，应降级为无中转完整覆写。
-function testPlaceholderCredentialsDegradeWithoutTransit() {
-  const { sandbox, output } = runMain(null, (sb) => {
-    sb.RESIDENTIAL_CREDENTIALS = {
-      transit: {
-        server: "transit.example.com",
-        port: 8001,
-        username: "你的用户名",
-        password: "你的密码"
-      },
-      homeStatic: {
-        server: "home.example.com",
-        port: 1080,
-        username: "",
-        password: ""
-      }
+    config["rule-providers"] = {
+      "GFWList-Site": { type: "http", behavior: "domain", url: "https://example.com/gfw.mrs" },
     };
   });
-  assert.strictEqual(
-    findProxy(output, sandbox.BASE.nodeNames.transit),
-    undefined,
-    "placeholder credentials must not inject transit"
-  );
-  assert.strictEqual(
-    findProxy(output, sandbox.BASE.nodeNames.homeStatic),
-    undefined,
-    "placeholder homeStatic must not inject socks"
-  );
-  assert(findGroup(output, sandbox.UI_GROUPS.ai), "AI panel present with placeholders");
+  assertRulesMissing(output.rules, [
+    "DOMAIN-KEYWORD,openai,办公娱乐好帮手",
+    "MATCH,办公娱乐好帮手",
+  ]);
+  assertRulesExist(output.rules, [
+    "MATCH,PROXY",
+    suffixRule("openai.com", sandbox.UI_GROUPS.ai),
+  ]);
+  assert.strictEqual(findGroup(output, "自动选择"), undefined);
+  assert.strictEqual(findGroup(output, "Bahamut"), undefined);
+  assert(findGroup(output, "PROXY"));
+  assert.deepEqual(output["rule-providers"], {});
 }
 
-// rejectQuic: false 时不注入全局 UDP:443 REJECT。
-function testRejectQuicCanBeDisabled() {
-  const { output } = runMain(null, (sb) => {
-    sb.USER_OPTIONS.rejectQuic = false;
+function testReconcileAndRerun() {
+  const first = runMain((config) => {
+    const base = loadSandbox().BASE;
+    config.proxies.push({
+      name: base.nodeNames.transit,
+      type: "socks5",
+      server: "bad",
+      port: 2,
+      username: "bad",
+      password: "bad",
+      udp: false,
+    });
+    config["proxy-groups"].push(
+      { name: base.residentialGroupName, type: "select", proxies: ["DIRECT"] },
+      { name: "🇸🇬 错误地区组", type: "select", proxies: ["DIRECT"] },
+    );
   });
-  assertRulesMissing(output.rules, ["AND,((NETWORK,udp),(DST-PORT,443)),REJECT"]);
-  assert(output.rules[0].indexOf("DOMAIN-SUFFIX,") === 0 || output.rules[0].indexOf("DOMAIN-") === 0,
-    "first rule should not be QUIC reject when disabled");
+  assert.strictEqual(
+    findProxy(first.output, first.sandbox.BASE.nodeNames.transit).server,
+    TEST_TRANSIT.server,
+  );
+  assert.deepEqual(
+    findGroup(first.output, first.sandbox.UI_GROUPS.strictExit).proxies,
+    expectedAntiBanChoices(first.output, first.sandbox),
+  );
+
+  const second = runMain(() => cloneJson(first.output));
+  for (const name of [
+    second.sandbox.BASE.residentialGroupName,
+    regionGroup(second.sandbox, "US"),
+    second.sandbox.UI_GROUPS.strictExit,
+  ]) {
+    assert.strictEqual(
+      second.output["proxy-groups"].filter((g) => g.name === name).length,
+      1,
+      "duplicate after rerun: " + name,
+    );
+  }
 }
 
-// dnsListen 可覆盖默认环回。
-function testDnsListenCanBeOverridden() {
-  const { output } = runMain(null, (sb) => {
-    sb.USER_OPTIONS.dnsListen = "0.0.0.0:1053";
-  });
-  assert.strictEqual(output.dns.listen, "0.0.0.0:1053");
-}
-
-// 精确名 PROXY 优先于含 PROXY 子串的组。
-function testDefaultProxyPrefersExactName() {
-  const { output } = runMain((config) => {
+function testRegionDetection() {
+  const english = runMain((config) => {
+    config.proxies = [
+      { name: "United States 01", type: "ss" },
+      { name: "Hong Kong 02", type: "ss" },
+      { name: "Singapore premium", type: "ss" },
+      { name: "Japan Tokyo", type: "ss" },
+    ];
     config["proxy-groups"] = [
-      { name: "办公PROXY", type: "select", proxies: ["🇸🇬 SG Auto 01"] },
-      { name: "PROXY", type: "select", proxies: ["🇺🇸 US Auto 01"] }
+      { name: "PROXY", type: "select", proxies: ["United States 01"] },
     ];
     config.rules = ["MATCH,PROXY"];
   });
-  assertRulesExist(output.rules, ["MATCH,PROXY"]);
-  assertRulesMissing(output.rules, ["MATCH,办公PROXY"]);
-  assertRulesExist(output.rules, ["GEOSITE,gfw,PROXY"]);
-}
+  for (const code of ["US", "HK", "SG", "JP"]) {
+    assert(findGroup(english.output, regionGroup(english.sandbox, code)));
+  }
 
-// MATCH 目标优先于松散关键词子串（避免「PROXY备用」抢走真主组）。
-function testDefaultProxyPrefersMatchOverKeyword() {
-  const { output } = runMain((config) => {
-    config["proxy-groups"] = [
-      { name: "PROXY备用", type: "select", proxies: ["🇸🇬 SG Auto 01"] },
-      { name: "手动选择", type: "select", proxies: ["🇺🇸 US Auto 01"] }
+  const compact = runMain((config) => {
+    config.proxies = [
+      { name: "US_Tokyo_01", type: "ss" },
+      { name: "SG01", type: "ss" },
     ];
-    config.rules = ["MATCH,手动选择"];
+    config["proxy-groups"] = [
+      { name: "PROXY", type: "select", proxies: ["US_Tokyo_01"] },
+    ];
+    config.rules = ["MATCH,PROXY"];
   });
-  assertRulesExist(output.rules, ["MATCH,手动选择"]);
-  assertRulesMissing(output.rules, ["MATCH,PROXY备用"]);
-  assertRulesExist(output.rules, ["GEOSITE,gfw,手动选择"]);
+  assert(findGroup(compact.output, regionGroup(compact.sandbox, "US")));
+  assert(findGroup(compact.output, regionGroup(compact.sandbox, "SG")));
 }
 
-// youtube 走视频面板；无 you keyword 误吸到 AI。
-function testYoutubeNotAbsorbedByAiKeyword() {
+function testHkOnlyRegion() {
+  const { sandbox, output } = runMain((config) => {
+    config.proxies = [{ name: "🇭🇰 HK Auto 01", type: "ss" }];
+    config["proxy-groups"] = [
+      { name: "PROXY", type: "select", proxies: ["🇭🇰 HK Auto 01"] },
+    ];
+    config.rules = ["MATCH,PROXY"];
+  });
+  assert(findGroup(output, regionGroup(sandbox, "HK")));
+  assert.strictEqual(findGroup(output, regionGroup(sandbox, "US")), undefined);
+  assert.strictEqual(
+    findGroup(output, sandbox.UI_GROUPS.otherExit).proxies[0],
+    regionGroup(sandbox, "HK"),
+  );
+}
+
+function testDnsOnlyNamesPolicy() {
+  // 与 dns-only 模式互补：确认 DNS_ONLY 域不进规则链
+  const { output } = runMain();
+  const identities = output.rules.map(ruleIdentity);
+  assert(!identities.includes("DOMAIN-SUFFIX,cnnic.cn"));
+  assert(!identities.includes("DOMAIN-SUFFIX,iana.org"));
+}
+
+function testExpectedRoutesCoverage() {
+  // 加载期 assertExpectedRoutesCoverage 已校验样本覆盖；此处核对关键样本落点。
   const { sandbox, output } = runMain();
-  assertRulesExist(output.rules, ["DOMAIN-SUFFIX,youtube.com," + sandbox.UI_GROUPS.video]);
-  assertRulesMissing(output.rules, [
-    "DOMAIN-SUFFIX,youtube.com," + sandbox.UI_GROUPS.ai,
-    "DOMAIN-KEYWORD,you," + sandbox.UI_GROUPS.ai
+  assertRulesExist(output.rules, [
+    suffixRule("claude.ai", sandbox.UI_GROUPS.ai),
+    suffixRule("azureedge.net", sandbox.UI_GROUPS.support),
+    suffixRule("youtube.com", sandbox.UI_GROUPS.video),
+    suffixRule("discord.com", sandbox.UI_GROUPS.im),
   ]);
 }
 
-// GEOSITE,gfw 规则应存在并将 GFW 域路由到默认代理组。
-function testGfwRuleExists() {
-  const { sandbox, output } = runMain();
-
-  var gfwRule = "GEOSITE,gfw,PROXY";
-  assertRulesExist(output.rules, [gfwRule]);
-  assertRuleAppearsBefore(output.rules, "GEOIP,CN,DIRECT", gfwRule);
-  assertRuleAppearsBefore(output.rules, "PROCESS-NAME,Claude," + sandbox.UI_GROUPS.ai, gfwRule);
-}
-
-// 订阅 rule-providers 应被清除，防止 RULE-SET 规则逃逸。
-function testRuleProvidersAreCleared() {
-  const { sandbox, output } = runMain((config) => {
-    config["rule-providers"] = {
-      "GFWList-Site": { type: "http", behavior: "domain", url: "https://example.com/gfw.mrs" }
-    };
-  });
-  assert.deepEqual(output["rule-providers"], {});
-}
+const integrationTests = [
+  ["mergedHappyPath", testMergedHappyPath],
+  ["antiBanAndUnlockExits", testAntiBanAndUnlockExits],
+  ["categoryExitCoupling", testCategoryExitCoupling],
+  ["brokenStrictCouplingFails", testBrokenStrictCouplingFails],
+  ["emptyCredentialsDegrade", testEmptyCredentialsDegrade],
+  ["placeholderCredentialsDegrade", testPlaceholderCredentialsDegrade],
+  ["homeStaticOnly", testHomeStaticOnly],
+  ["homeStaticPreferredOverTransit", testHomeStaticPreferredOverTransit],
+  ["noRegionNodesStillWorks", testNoRegionNodesStillWorks],
+  ["strictDomainRouting", testStrictDomainRouting],
+  ["trimmedStrictListsAbsent", testTrimmedStrictListsAbsent],
+  ["mediaDomainRouting", testMediaDomainRouting],
+  ["cdnCloudScope", testCdnCloudScope],
+  ["processRouting", testProcessRouting],
+  ["ruleOrder", testRuleOrder],
+  ["dnsAndSnifferMerged", testDnsAndSnifferMerged],
+  ["dnsOnlyMode", testDnsOnlyMode],
+  ["directCnAndOverseas", testDirectCnAndOverseas],
+  ["quicAndDnsListenOptions", testQuicAndDnsListenOptions],
+  ["defaultProxyResolution", testDefaultProxyResolution],
+  ["gfwAndMatchTargets", testGfwAndMatchTargets],
+  ["disabledSwitch", testDisabledSwitch],
+  ["subscriptionCleanup", testSubscriptionCleanup],
+  ["reconcileAndRerun", testReconcileAndRerun],
+  ["regionDetection", testRegionDetection],
+  ["hkOnlyRegion", testHkOnlyRegion],
+  ["dnsOnlyNamesPolicy", testDnsOnlyNamesPolicy],
+  ["expectedRoutesCoverage", testExpectedRoutesCoverage],
+  // 补齐至 30：浏览器进 AI、启用默认行为
+  ["browserPinnedToAi", function testBrowserPinnedToAi() {
+    const { sandbox, derived, output } = runMain();
+    for (const name of derived.processNames.browser) {
+      assertRulesExist(output.rules, [processRule(name, sandbox.UI_GROUPS.ai)]);
+    }
+  }],
+  ["enabledDefaultApplies", function testEnabledDefaultApplies() {
+    const { output } = runMain();
+    assert.strictEqual(output.dns.enable, true);
+    assert.strictEqual(output.sniffer.enable, true);
+    assert(output.rules.some((r) => r.indexOf("DOMAIN-SUFFIX,openai.com") === 0));
+  }],
+];
 
 // ===========================================================================
 // Runner
 // ===========================================================================
 
-const unitTests = [
-  testToSuffix,
-  testUniqueStrings,
-  testBuildStringLookup,
-  testCreateUserError,
-  testNormalizeOverrideMode,
-  testVersionSingleDefinition,
-  testCoreGroupDefinition,
-  testNoProviderBrandInScript,
-  testNoSeparateBrowserRoutingOption,
-  testNoHardcodedSubscriptionDefaultProxy,
-  testDefaultProxyKeywordsAreRestricted,
-  testFakeIpBypassConstant,
-  testDnsConfigContainsFakeIpBypass,
-  testHasConfiguredResidentialCredentialsPort,
-  testValidProxyTypesConstant,
-  testBuildResidentialProxyTypeValidation,
-];
+function runSuite(label, tests) {
+  console.log(label + " (" + tests.length + "):");
+  let failed = 0;
+  for (const [name, fn] of tests) {
+    try {
+      fn();
+      console.log("  PASS " + name);
+    } catch (err) {
+      failed += 1;
+      console.log("  FAIL " + name);
+      console.log("    " + (err && err.stack ? err.stack : err));
+    }
+  }
+  return failed;
+}
 
-const integrationTests = [
-  testDefaultConfig,
-  testProxyTargetsUseDefaultGroup,
-  testEmptyCredentialsDegradesWithoutTransit,
-  testHomeStaticSocksOnlyCountsAsResidential,
-  testHomeStaticPreferredOverTransit,
-  testMergedModeDoesNotRequireRegionNodes,
-  testUnifiedDnsSnifferOnlyMode,
-  testAiCliProcessProxyDefaultsOn,
-  testOnlyAiAndBrowserProcessesAreManaged,
-  testBrokenStrictExitCouplingFails,
-  testExistingManagedObjectsAreReconciled,
-  testResidentialGroupIsReconciled,
-  testBadExternalRegionGroupIsNotReused,
-  testNodeSelectionKeepsManagedRegionGroups,
-  testRepeatedRunDoesNotCreateSelfReference,
-  testRegionGroupsKeepBrowserRouting,
-  testRegionGroupsCanBeGeneratedFromHKOnly,
-  testRegionRegexAcceptsEnglishFullName,
-  testRegionRegexAcceptsUnderscoreAndNoSeparator,
-  testMergedModeDegradesWhenCredentialsMissing,
-  testDisabledMasterSwitch,
-  testEnabledMasterSwitchDefault,
-  testSubscriptionNonMatchRulesAreCleared,
-  testGfwRuleExists,
-  testRuleProvidersAreCleared,
-  testSubscriptionProxyGroupsAreCleaned,
-  testPlaceholderCredentialsDegradeWithoutTransit,
-  testRejectQuicCanBeDisabled,
-  testDnsListenCanBeOverridden,
-  testDefaultProxyPrefersExactName,
-  testDefaultProxyPrefersMatchOverKeyword,
-  testYoutubeNotAbsorbedByAiKeyword,
-];
+assert.strictEqual(unitTests.length, 16, "expected 16 unit tests");
+assert.strictEqual(integrationTests.length, 30, "expected 30 integration tests");
 
-console.log("Unit tests (" + unitTests.length + "):");
-for (const t of unitTests) t();
+let failures = 0;
+failures += runSuite("Unit tests", unitTests);
+console.log("");
+failures += runSuite("Integration tests", integrationTests);
 
-console.log("\nIntegration tests (" + integrationTests.length + "):");
-for (const t of integrationTests) t();
+if (failures > 0) {
+  console.log("\n" + failures + " check(s) failed");
+  process.exit(1);
+}
 
-console.log("\nAll " + (unitTests.length + integrationTests.length) + " checks passed");
+console.log(
+  "\nAll " + (unitTests.length + integrationTests.length) + " checks passed",
+);

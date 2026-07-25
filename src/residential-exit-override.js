@@ -4,7 +4,7 @@
 // 请在下面的 RESIDENTIAL_CREDENTIALS 和 USER_OPTIONS 中填写你的配置。
 // 兼容性：Clash Verge / Clash Party 的 JavaScriptCore；只用 ES5 语法。
 //
-// @version 14.23
+// @version 14.33
 
 // ===========================================================================
 // 用户配置
@@ -18,19 +18,17 @@ var USER_OPTIONS = {
 };
 
 var RESIDENTIAL_CREDENTIALS = {
-  // 官方中转
+  username: "",
+  password: "",
+  // 官方中转（SOCKS5）
   transit: {
     server: "",
     port: 8001,
-    username: "",
-    password: "",
   },
-  // 家庭静态 IP
+  // 静态 IP（SOCKS5）
   homeStatic: {
     server: "",
     port: 8022,
-    username: "",
-    password: "",
   },
 };
 
@@ -190,51 +188,20 @@ var DNS_SNIFFER_MODULE = (function () {
         "+.login.microsoft.com",
         "+.account.microsoft.com",
       ],
-      microsoft_developer: [
-        "+.visualstudio.com",
-        "+.vsassets.io",
-      ], // Microsoft 开发者与 VS Code 生态基础设施
-      developer_git_hosts: [
-        "+.github.com",
-        "+.githubusercontent.com", // raw.githubusercontent.com 等，GFW 下常被 DNS 污染
-        "+.gitlab.com",
-        "+.gitlab-static.net",
-        "+.bitbucket.org",
-        "+.atlassian.com", // Jira / Confluence / Bitbucket 官网
-        "+.atlassian.net", // 客户工作区子域
-      ],
+      // Antigravity / VS 扩展更新（与 Gemini IDE 同账号体系）。
+      microsoft_developer: ["+.visualstudio.com", "+.vsassets.io"],
+      // Claude Code / Codex 拉依赖时出口需与主站一致，避免 CLI 风控分裂。
+      developer_git_hosts: ["+.github.com", "+.githubusercontent.com"],
       developer_package_registries: [
-        "+.npmjs.org", // npm registry（Claude Code 自更新 + JS 项目依赖）
+        "+.npmjs.org",
         "+.npmjs.com",
-        "+.pypi.org", // Python
-        "+.pythonhosted.org", // PyPI 包文件 CDN
-        "+.crates.io", // Rust
-        "+.rubygems.org", // Ruby
-        "+.docker.io", // Docker registry（docker.com 营销站不绑严管）
+        "+.pypi.org",
+        "+.pythonhosted.org",
       ],
-      developer_deployment: [
-        "+.vercel.com",
-        "+.vercel.app",
-        "+.vercel-storage.com",
-        "+.netlify.com",
-        "+.netlify.app",
-        "+.supabase.com",
-        "+.supabase.co",
-        "+.fly.io",
-        "+.fly.dev",
-        "+.render.com",
-        "+.onrender.com",
-        "+.railway.app",
-      ],
-      // JetBrains / 文档站 / Notion / Figma 不进严管：日常浏览落到 GFW/MATCH。
-      // 用出口检测站验证「严管/家宽」是否生效；勿再 DIRECT（否则永远显示本机 IP）。
-      egress_check: [
-        "+.ping0.cc",
-        "+.ipinfo.io",
-        "+.ifconfig.me",
-        "+.ip.sb",
-      ],
+      // 验防封出口是否生效（勿改 DIRECT）。
+      egress_check: ["+.ipinfo.io", "+.ip.sb"],
     },
+    // 严管 AI：一线账号服务。OpenRouter / Mistral / HF / Cursor 不进严管。
     ai: {
       anthropic: [
         "+.claude.ai",
@@ -247,16 +214,16 @@ var DNS_SNIFFER_MODULE = (function () {
         "+.chatgpt.com",
         "+.chat.com",
         "+.sora.com",
-        "+.crixet.com",
-        "+.oaiusercontent.com", // OpenAI 官方静态资源
+        "+.oaiusercontent.com",
         "+.oaistatic.com",
-        // azureedge / azurefd / cdn.cloudflare 由 CDN.cloud 覆盖，不再为单租户主机重复挂规则。
+        // azureedge / azurefd / cdn.cloudflare 由 CDN.cloud 覆盖。
         "+.openaicom.imgix.net",
         "+.openaicomproductionae4b.blob.core.windows.net",
         "+.chatgpt.livekit.cloud",
-        "+.challenges.cloudflare.com", // Turnstile；非整树 cloudflare.com
+        "+.challenges.cloudflare.com",
       ],
-      google_ai: [
+      // Gemini + Antigravity：Web / API / IDE 同一账号体系。
+      gemini_antigravity: [
         "+.gemini.google.com",
         "+.aistudio.google.com",
         "+.ai.google.dev",
@@ -264,101 +231,41 @@ var DNS_SNIFFER_MODULE = (function () {
         "+.generativelanguage.googleapis.com",
         "+.ai.google",
         "+.notebooklm.google",
-        "+.deepmind.google",
-        "+.labs.google",
-      ],
-      google_antigravity: [
         "+.antigravity.google",
-        "+.antigravity-ide.com", // Antigravity IDE 的非 google 子域资源站
+        "+.antigravity-ide.com",
         "+.cloudcode-pa.googleapis.com",
         "+.daily-cloudcode-pa.googleapis.com",
         "+.daily-cloudcode-pa.sandbox.googleapis.com",
       ],
-      perplexity: [
-        "+.perplexity.ai",
-        "+.perplexitycdn.com", // Perplexity 资源分发域名
-      ],
-      router_and_tools: ["+.openrouter.ai"],
+      perplexity: ["+.perplexity.ai", "+.perplexitycdn.com"],
       meta: ["+.meta.ai"],
       xai: ["+.x.ai", "+.grok.com"],
-      cursor: ["+.cursor.sh", "+.cursor.com"], // Cursor 后端与鉴权域名；PROCESS-NAME 仅覆盖进程，域名层仍需显式入链
-      mistral: [
-        "+.mistral.ai", // 含 api / console / codestral 全部子域
-      ],
-      huggingface: [
-        "+.huggingface.co",
-        "+.hf.co", // 短链
-        "+.hf.space", // Spaces 应用托管
-      ],
-      replicate: [
-        "+.replicate.com",
-        "+.replicate.delivery", // 模型输出 CDN
-      ],
-      groq: ["+.groq.com"],
-      together: ["+.together.ai", "+.together.xyz"],
-      elevenlabs: [
-        "+.elevenlabs.io", // 语音合成
-      ],
-      midjourney: ["+.midjourney.com"],
-      runway: [
-        "+.runwayml.com", // Runway 视频生成
-      ],
-      stability: ["+.stability.ai"],
-      ideogram: ["+.ideogram.ai"],
-      civitai: [
-        "+.civitai.com", // SD 模型与社区
-      ],
-      // 通用搜索 / 角色陪聊 / 写作翻译 / 消费级创作站不进严管：
-      // 出口 IP 敏感度低，绑家宽只会烧流量；落到 GFW/MATCH 或进程兜底即可。
-      ai_platforms: [
-        "+.cohere.com", // Cohere 企业 AI API
-        "+.replit.com", // Replit AI 编程平台
-      ],
-      ai_coding: [
-        "+.codeium.com", // Windsurf AI IDE
-        "+.windsurf.com",
-        "+.v0.dev", // Vercel AI UI builder
-        "+.bolt.new", // StackBlitz AI 编程
-        "+.lovable.dev", // Lovable AI 应用构建
-      ],
     },
-    // AI 会话共享的第三方集成（反作弊、鉴权、支付、遥测）。
-    // 仅保留与 AI 登录/订阅强相关、出口 IP 需一致的项；通用 SaaS 整平台不进严管。
+    // 登录验证 / 订阅支付 / feature flag：必须与 AI 主站同出口。
     integrations: {
       antibot: [
-        "+.arkoselabs.com", // ChatGPT 登录的 Arkose FunCaptcha（token 绑定客户端 IP）
+        "+.arkoselabs.com",
         "+.funcaptcha.com",
-        "+.recaptcha.net", // reCAPTCHA 独立域，并不走 google.com
-        "+.hcaptcha.com", // hCaptcha（Discord / 部分 AI 注册）
+        "+.recaptcha.net",
       ],
-      auth_providers: [
-        "+.auth0.com", // ChatGPT Team 等使用 Auth0
-        "+.auth0cdn.com",
-        "+.clerk.com", // OpenRouter / 多家 AI 创业用 Clerk
-        "+.clerk.dev",
-        "+.clerk.accounts.dev",
-      ],
-      payments: [
-        "+.stripe.com", // Claude Pro / ChatGPT Plus / Perplexity Pro 主要结算入口
-        "+.stripe.network",
-      ],
-      // Intercom / PostHog 等客服与产品分析不进严管：不参与登录/支付指纹，落到 GFW/MATCH。
+      auth_providers: ["+.auth0.com", "+.auth0cdn.com", "+.clerk.com"],
+      payments: ["+.stripe.com", "+.stripe.network"],
       telemetry: [
-        "+.statsig.com", // Claude Code / Claude.ai / ChatGPT 的 feature flag
+        "+.statsig.com",
         "+.statsigapi.net",
         "+.featuregates.org",
         "+.featureassets.org",
       ],
     },
-    // challenges.cloudflare.com 已在 ai.openai；不再整域绑 cloudflare.com。
     apps: {
       ai: {
+        // 桌面 App / IDE；Gemini+Antigravity 同策略；不含 Cursor。
         apps: [
           "Claude",
           "ChatGPT",
           "Codex",
           "Perplexity",
-          "Cursor",
+          "Gemini",
           "Antigravity",
           "Antigravity IDE",
         ],
@@ -377,13 +284,14 @@ var DNS_SNIFFER_MODULE = (function () {
           "Codex Helper (Renderer)",
           "Codex Helper (GPU)",
           "Codex Helper (Plugin)",
-          "Cursor Helper (Renderer)",
-          "Cursor Helper (GPU)",
-          "Cursor Helper (Plugin)",
           "Perplexity.exe",
           "Perplexity Helper (Renderer)",
           "Perplexity Helper (GPU)",
           "Perplexity Helper (Plugin)",
+          "Gemini.exe",
+          "Gemini Helper (Renderer)",
+          "Gemini Helper (GPU)",
+          "Gemini Helper (Plugin)",
           "Antigravity.exe",
           "Antigravity Helper (Renderer)",
           "Antigravity Helper (GPU)",
@@ -392,6 +300,7 @@ var DNS_SNIFFER_MODULE = (function () {
           "Antigravity IDE Helper (Renderer)",
           "Antigravity IDE Helper (GPU)",
           "Antigravity IDE Helper (Plugin)",
+          // Antigravity IDE language server / tools
           "language_server",
           "language_server.exe",
           "language_server_macos_arm",
@@ -399,27 +308,28 @@ var DNS_SNIFFER_MODULE = (function () {
           "language_server_linux_x64",
           "language_server_windows_x64.exe",
           "antigravity_tools",
-          // macOS PROCESS-NAME 匹配 Bundle 可执行名，不含 `.app` 后缀；Electron 进程名太宽，不列入。
-          // Claude Code / URL Handler 都以 `claude` 运行，统一通过 ai.cli 命中。
-          "Quotio",
         ],
         cli: [
           "claude",
           "claude.exe",
-          "gemini",
           "codex",
           "codex.exe",
           "codex-aarch64-apple-darwin",
           "codex-x86_64-apple-darwin",
           "codex-aarch64-unknown-linux-musl",
           "codex-x86_64-unknown-linux-musl",
+          // Gemini CLI + Antigravity CLI（agy）
+          "gemini",
+          "gemini.exe",
           "agy",
           "agy.exe",
           "antigravity",
+          "antigravity.exe",
         ],
       },
+      // AI 浏览器：仅 Comet / Dia / Atlas；Chrome / Edge / Safari 等不列入。
       browser: {
-        apps: ["Dia", "Atlas", "SunBrowser"],
+        apps: ["Comet", "Dia", "Atlas"],
         helperSuffixes: [
           "Helper",
           "Helper (Renderer)",
@@ -437,42 +347,23 @@ var DNS_SNIFFER_MODULE = (function () {
       core: ["+.dns.google", "+.cloudflare-dns.com", "+.quad9.net"],
     },
     cloud: {
-      // 仅大厂基础设施后缀。消费站 / 租户平台（amazon.com、pages.dev、workers.dev）
-      // 与通用 SaaS CDN（jsDelivr / Bunny / Cloudinary）不进支撑，避免过宽绑家宽。
+      // 仅 OpenAI/Claude 等常用云 CDN 后缀；Akamai/Fastly 过宽，不绑防封出口。
       cloudflare: ["+.cdn.cloudflare.net"],
-      aws: [
-        "+.amazonaws.com",
-        "+.awsstatic.com",
-        "+.cloudfront.net",
-      ],
-      fastly: ["+.fastly.com", "+.fastly.net", "+.fastlylb.net"],
-      akamai: [
-        "+.akamai.net",
-        "+.akamaiedge.net",
-        "+.akamaihd.net",
-        "+.akamaized.net",
-        "+.edgekey.net",
-        "+.edgesuite.net",
-      ],
+      aws: ["+.amazonaws.com", "+.awsstatic.com", "+.cloudfront.net"],
       azure_cdn: ["+.azureedge.net", "+.azurefd.net"],
     },
   };
 
-  // ---------- Media（独立地区组，不走家宽出口） ----------
-  // 分四类：视频流媒体 / 音乐流媒体 / 社交 / 即时通讯。
-  // 这一桶里的所有域名都路由到媒体分区面板，与家宽出口解耦，
-  // 也借此跨越对这些站点不友好的网络环境（GFW、地区封锁等）。
+  // ---------- Media · 其他调度（解锁出口，不走家宽） ----------
+  // 只维护需地区解锁的主流站；LinkedIn / Slack / Signal / SoundCloud 等落到 GFW/MATCH。
   var MEDIA = {
-    // 按 UI 面板分为 video, music, social, im 四个路由分桶
     video: {
-      // ---- 视频流媒体 ----
       youtube: [
         "+.youtube.com",
         "+.youtu.be",
         "+.googlevideo.com",
         "+.ytimg.com",
         "+.youtube-nocookie.com",
-        "+.yt.be",
       ],
       netflix: [
         "+.netflix.com",
@@ -480,43 +371,26 @@ var DNS_SNIFFER_MODULE = (function () {
         "+.nflxvideo.net",
         "+.nflxso.net",
         "+.nflximg.net",
-        "+.nflximg.com",
         "+.nflxext.com",
       ],
       disney_plus: [
         "+.disneyplus.com",
         "+.disney-plus.net",
-        "+.dssott.com", // Disney+ 流媒体 CDN
-        "+.bamgrid.com", // BAMTech（Disney 流媒体后端）
+        "+.dssott.com",
+        "+.bamgrid.com",
       ],
-      hbo_max: [
-        "+.max.com",
-        "+.hbomax.com",
-        "+.hbomaxcdn.com",
-      ],
-      // Peacock / Paramount / Crunchyroll / Hulu / Vimeo / Dailymotion 不显式维护：长尾，落到 GFW/MATCH。
+      hbo_max: ["+.max.com", "+.hbomax.com", "+.hbomaxcdn.com"],
       prime_video: [
         "+.primevideo.com",
-        "+.aiv-cdn.net", // Prime Video CDN（与 amazon.com 主站解耦）
+        "+.aiv-cdn.net",
         "+.aiv-delivery.net",
       ],
       twitch: ["+.twitch.tv", "+.ttvnw.net", "+.jtvnw.net"],
     },
     music: {
-      // ---- 音乐流媒体 ----
-      spotify: [
-        "+.spotify.com",
-        "+.scdn.co", // Spotify 静态资源
-        "+.spotifycdn.com",
-      ],
-      soundcloud: [
-        "+.soundcloud.com",
-        "+.sndcdn.com", // SoundCloud CDN
-      ],
-      // Bandcamp 不显式维护。
+      spotify: ["+.spotify.com", "+.scdn.co", "+.spotifycdn.com"],
     },
     social: {
-      // ---- 社交 ----
       twitter: ["+.twitter.com", "+.x.com", "+.twimg.com", "+.t.co"],
       meta: [
         "+.facebook.com",
@@ -525,25 +399,18 @@ var DNS_SNIFFER_MODULE = (function () {
         "+.facebook.net",
         "+.instagram.com",
         "+.cdninstagram.com",
-        "+.threads.net", // Meta 旗下 Threads
+        "+.threads.net",
       ],
       reddit: ["+.reddit.com", "+.redditmedia.com", "+.redditstatic.com"],
       tiktok: [
-        // TikTok 海外版（与抖音 douyin.com 无关，不会触发境内分流）
         "+.tiktok.com",
         "+.tiktokcdn.com",
         "+.tiktokv.com",
         "+.ibyteimg.com",
       ],
-      // Snapchat / Pinterest / Bluesky / Tumblr / Medium / Substack / Patreon 不显式维护。
-      linkedin: [
-        "+.linkedin.com", // LinkedIn 职业社交
-        "+.licdn.com", // LinkedIn CDN
-      ],
     },
     im: {
-      // ---- 即时通讯 ----
-      telegram: ["+.telegram.org", "+.t.me", "+.telegra.ph", "+.telesco.pe"],
+      telegram: ["+.telegram.org", "+.t.me"],
       discord: [
         "+.discord.com",
         "+.discord.gg",
@@ -552,24 +419,12 @@ var DNS_SNIFFER_MODULE = (function () {
         "+.discord.media",
       ],
       line: [
-        // LINE（日 / 韩 / 台主流 IM）
         "+.line.me",
         "+.line-apps.com",
         "+.line-scdn.net",
         "+.line-cdn.net",
       ],
-      whatsapp: [
-        // WhatsApp（Meta 旗下，但放 IM 桶更直观）
-        "+.whatsapp.com",
-        "+.whatsapp.net",
-      ],
-      signal: ["+.signal.org"],
-      slack: [
-        "+.slack.com", // Slack 企业即时通讯
-        "+.slack-edge.com",
-        "+.slack-imgs.com",
-      ],
-      // Zoom 会议不进其他调度：企业场景常需稳定直连/默认组，避免被媒体出口拖垮。
+      whatsapp: ["+.whatsapp.com", "+.whatsapp.net"],
     },
   };
 
@@ -818,26 +673,27 @@ var DNS_SNIFFER_MODULE = (function () {
         "chatgpt.livekit.cloud",
         "challenges.cloudflare.com",
         "gemini.google.com",
+        "aistudio.google.com",
         "aiplatform.googleapis.com",
         "antigravity.google",
+        "antigravity-ide.com",
         "cloudcode-pa.googleapis.com",
         "daily-cloudcode-pa.googleapis.com",
         "daily-cloudcode-pa.sandbox.googleapis.com",
         "perplexity.ai",
-        "accounts.google.com", // Google OAuth（不再整树 google.com）
+        "accounts.google.com",
         "consent.google.com",
-        "gstatic.com", // OAuth consent 静态资源
+        "gstatic.com",
         "apis.google.com",
         "googleusercontent.com",
-        "cursor.sh", // Cursor 后端
-        "arkoselabs.com", // Arkose 登录反机器人（integrations.antibot）
-        "stripe.com", // AI 订阅支付（integrations.payments）
-        "statsig.com", // feature flag（integrations.telemetry）
-        "ipinfo.io", // 出口检测改走支撑/严管，用于验证家宽
-        "githubusercontent.com", // GitHub 原始内容，GFW 下易污染
-        "npmjs.org", // npm 官方 registry
-        "cohere.com",
-        "windsurf.com",
+        "meta.ai",
+        "grok.com",
+        "arkoselabs.com",
+        "stripe.com",
+        "statsig.com",
+        "ipinfo.io",
+        "githubusercontent.com",
+        "npmjs.org",
       ],
       processNames: [
         "Claude",
@@ -846,10 +702,10 @@ var DNS_SNIFFER_MODULE = (function () {
         "ChatGPT Helper (Renderer)",
         "Codex",
         "Codex.exe",
-        "Cursor",
-        "Cursor Helper (Renderer)",
         "Perplexity",
         "Perplexity Helper (Renderer)",
+        "Gemini",
+        "Gemini Helper (Renderer)",
         "Antigravity",
         "Antigravity IDE",
         "language_server",
@@ -860,19 +716,22 @@ var DNS_SNIFFER_MODULE = (function () {
         "codex",
         "codex.exe",
         "codex-aarch64-apple-darwin",
+        "gemini",
+        "gemini.exe",
         "agy",
+        "antigravity",
       ],
     },
     toMedia: {
       domains: [
-        "youtube.com", // 视频流媒体
-        "x.com", // 社交
-        "twitch.tv", // 直播
-        "spotify.com", // 音乐
-        "line.me", // IM
-        "whatsapp.com", // IM
-        "slack.com", // IM（企业即时通讯）
-        "linkedin.com", // 社交（职业社交）
+        "youtube.com",
+        "netflix.com",
+        "x.com",
+        "twitch.tv",
+        "spotify.com",
+        "discord.com",
+        "line.me",
+        "whatsapp.com",
       ],
     },
   };
@@ -1485,7 +1344,7 @@ var BASE = {
   },
   nodeNames: {
     transit: "家宽出口（官方中转）",
-    homeStatic: "家宽出口（家庭静态 IP）",
+    homeStatic: "家宽出口（静态IP）",
   },
   defaultProxyGroupKeywords: ["PROXY", "节点选择", "手动选择", "GLOBAL"],
   ruleTargets: {
@@ -1503,7 +1362,7 @@ var BASE = {
     base: "az.分区测速.",
   },
   residentialGroupName: "az.核心出口.🏠 家宽出口",
-  // Clash 支持的合法代理类型；buildResidentialProxy 会校验硬编码类型在此白名单内。
+  // Clash 支持的合法代理类型；家宽出口构建会校验 socks5 在此白名单内。
   validProxyTypes: [
     "http",
     "https",
@@ -1562,27 +1421,9 @@ function buildRegionGroupName(regionMeta, groupNameSuffix) {
   );
 }
 
-// 根据端点信息生成家宽出口 HTTP 代理节点（官方中转）。
-// transit: { server, port, username, password }
-function buildResidentialProxy(transit, proxyName) {
-  if (BASE.validProxyTypes.indexOf("http") < 0) {
-    throw createUserError(
-      "家宽出口代理类型 http 不在 Clash 合法代理类型列表中，请检查 BASE.validProxyTypes",
-    );
-  }
-  return {
-    name: proxyName,
-    type: "http",
-    server: transit.server,
-    port: transit.port,
-    username: transit.username,
-    password: transit.password,
-    udp: true,
-  };
-}
-
-// 生成家庭静态 IP 的 SOCKS5 节点；无用户名/密码时不写入认证字段。
-function buildHomeStaticSocksProxy(homeStatic, proxyName) {
+// 生成家宽出口 SOCKS5 节点（官方中转 / 静态IP 共用）。
+// endpoint: { server, port, username, password }；无用户名/密码时不写入认证字段。
+function buildResidentialSocksProxy(endpoint, proxyName) {
   if (BASE.validProxyTypes.indexOf("socks5") < 0) {
     throw createUserError(
       "家宽出口代理类型 socks5 不在 Clash 合法代理类型列表中，请检查 BASE.validProxyTypes",
@@ -1591,12 +1432,12 @@ function buildHomeStaticSocksProxy(homeStatic, proxyName) {
   var proxy = {
     name: proxyName,
     type: "socks5",
-    server: homeStatic.server,
-    port: homeStatic.port,
+    server: endpoint.server,
+    port: endpoint.port,
     udp: true,
   };
-  if (homeStatic.username) proxy.username = homeStatic.username;
-  if (homeStatic.password) proxy.password = homeStatic.password;
+  if (endpoint.username) proxy.username = endpoint.username;
+  if (endpoint.password) proxy.password = endpoint.password;
   return proxy;
 }
 
@@ -1695,10 +1536,12 @@ function resolveDefaultGroupFromMatch(config) {
 }
 
 // 将管理组追加到订阅默认代理组的候选列表。
+// prepend=true 时插到默认组最前（防封总闸优先可见）。
 function writeManagedGroupIntoDefaultProxy(
   config,
   managedGroupName,
   defaultProxyGroupName,
+  prepend,
 ) {
   if (!defaultProxyGroupName) return;
   var defaultProxyGroup = findProxyGroupByName(
@@ -1707,7 +1550,8 @@ function writeManagedGroupIntoDefaultProxy(
   );
   if (!defaultProxyGroup || !defaultProxyGroup.proxies) return;
   var nextProxyNames = [].concat(defaultProxyGroup.proxies);
-  nextProxyNames.push(managedGroupName);
+  if (prepend) nextProxyNames.unshift(managedGroupName);
+  else nextProxyNames.push(managedGroupName);
   defaultProxyGroup.proxies = uniqueStrings(nextProxyNames);
 }
 
@@ -1753,12 +1597,15 @@ function removeNamedProxy(config, proxyName) {
   if (index >= 0) proxies.splice(index, 1);
 }
 
-// 注入已配置的家宽出口节点：家庭静态 IP（SOCKS）与/或官方中转（HTTP）。
+// 注入已配置的家宽出口节点：静态IP 与/或 官方中转（均为 SOCKS5）。
 function writeResidentialExitProxies(config, residentialExits) {
+  // 清理更名/协议变更前的旧节点名，避免订阅里残留。
+  removeNamedProxy(config, "家宽出口（家庭静态 IP）");
+
   if (residentialExits.homeStatic) {
     upsertNamedItem(
       config.proxies,
-      buildHomeStaticSocksProxy(
+      buildResidentialSocksProxy(
         residentialExits.homeStatic,
         BASE.nodeNames.homeStatic,
       ),
@@ -1770,14 +1617,17 @@ function writeResidentialExitProxies(config, residentialExits) {
   if (residentialExits.transit) {
     upsertNamedItem(
       config.proxies,
-      buildResidentialProxy(residentialExits.transit, BASE.nodeNames.transit),
+      buildResidentialSocksProxy(
+        residentialExits.transit,
+        BASE.nodeNames.transit,
+      ),
     );
   } else {
     removeNamedProxy(config, BASE.nodeNames.transit);
   }
 }
 
-// 已配置的家宽实体节点名（静态 IP → 官方中转）。供组内成员与调度扁平挂载共用。
+// 已配置的家宽实体节点名（静态IP → 官方中转）。供组内成员与调度扁平挂载共用。
 function listResidentialExitNodeNames(residentialExits) {
   var names = [];
   if (residentialExits && residentialExits.homeStatic) {
@@ -1841,29 +1691,33 @@ function buildDegradedResidentialMembers(regionalTargets) {
 
 // UI 面板代理组名常量。
 var UI_GROUPS = {
-  // 严管三组共用；默认美区优先。防封号请手动切到家宽出口。
-  strictExit: "az.严管调度.🎯 统一出口",
-  ai: "az.严管调度.🤖 AI 高敏阵列",
-  support: "az.严管调度.🛠️ 支撑平台",
-  integrations: "az.严管调度.🛡️ 生态域集成",
-  // 其他调度四组共用；与严管统一出口分离，改媒体出口不影响 AI。
-  otherExit: "az.其他调度.🎯 统一出口",
+  // 严管三组共用「防封出口」：有家宽时只挂实体节点，避免误切机房。
+  strictExit: "az.严管调度.🏠 防封出口",
+  ai: "az.严管调度.🤖 AI 服务",
+  support: "az.严管调度.🔑 登录旁路",
+  integrations: "az.严管调度.💳 支付验证",
+  // 其他调度四组共用「解锁出口」；与防封分离。
+  otherExit: "az.其他调度.🌏 解锁出口",
   video: "az.其他调度.🎬 视频流媒体",
   music: "az.其他调度.🎵 音乐播客",
   social: "az.其他调度.🌐 社交长文",
   im: "az.其他调度.💬 即时通讯",
 };
 
-// 写入 UI 面板策略组。
-// 严管 / 其他 各有独立「统一出口」，互不影响；两者默认均为美区优先。
-// 候选：US → JP → SG → HK → 家宽实体节点 → 家宽组；分类面板只挂各自统一出口。
-function writeExpandedProxyGroups(
-  config,
+// 防封出口候选：有家宽 → 只挂扁平实体节点（静态 IP → 中转，不套家宽组、不挂地区）；
+// 无家宽降级 → 只挂家宽组（组内为地区/DIRECT）。
+function buildStrictAntiBanExitChoices(exitNodeNames, residentialTarget) {
+  var exitNames = exitNodeNames || [];
+  if (exitNames.length > 0) return uniqueStrings(exitNames);
+  return [residentialTarget];
+}
+
+// 其他解锁出口候选：地区优先，家宽垫后（媒体解锁）。
+function buildOtherUnlockExitChoices(
+  exitNodeNames,
   residentialTarget,
   regionalTargets,
-  exitNodeNames,
 ) {
-  var proxyGroups = config["proxy-groups"];
   var regionOrder = [];
   var exitNames = exitNodeNames || [];
   if (regionalTargets.US) regionOrder.push(regionalTargets.US);
@@ -1872,13 +1726,29 @@ function writeExpandedProxyGroups(
     var target = regionalTargets[remainingRegions[j]];
     if (target) regionOrder.push(target);
   }
-
-  // 两套统一出口同一候选序：美区优先，家宽仍可选（防封号时手动切回家宽）。
-  var unifiedChoices = uniqueStrings(
+  return uniqueStrings(
     regionOrder.concat(exitNames).concat([residentialTarget]),
   );
-  var strictChoices = unifiedChoices;
-  var otherChoices = unifiedChoices.slice();
+}
+
+// 写入 UI 面板策略组。
+// 防封出口 / 解锁出口互不影响；分类面板只挂各自总闸，避免 AI/支付/验证 IP 分裂。
+function writeExpandedProxyGroups(
+  config,
+  residentialTarget,
+  regionalTargets,
+  exitNodeNames,
+) {
+  var proxyGroups = config["proxy-groups"];
+  var strictChoices = buildStrictAntiBanExitChoices(
+    exitNodeNames,
+    residentialTarget,
+  );
+  var otherChoices = buildOtherUnlockExitChoices(
+    exitNodeNames,
+    residentialTarget,
+    regionalTargets,
+  );
   var strictOnly = [UI_GROUPS.strictExit];
   var otherOnly = [UI_GROUPS.otherExit];
 
@@ -1955,6 +1825,18 @@ function resolveRoutingTargets(config, residentialExits) {
     residentialGroupName,
     regionalTargets,
     exitNodeNames,
+  );
+  // 默认组露出总闸；防封出口置顶，开箱先看见家宽防封。
+  writeManagedGroupIntoDefaultProxy(
+    config,
+    UI_GROUPS.strictExit,
+    defaultProxyGroupName,
+    true,
+  );
+  writeManagedGroupIntoDefaultProxy(
+    config,
+    UI_GROUPS.otherExit,
+    defaultProxyGroupName,
   );
   cleanupSubscriptionProxyGroups(config, defaultProxyGroupName);
 
@@ -2242,17 +2124,17 @@ function assertResidentialExitBindings(config, routingTargets) {
   if (routingTargets.hasHomeStatic) {
     if (!homeProxy || homeProxy.type !== "socks5") {
       throw createUserError(
-        "家庭静态 IP 节点状态异常，请检查 RESIDENTIAL_CREDENTIALS.homeStatic",
+        "静态IP 节点状态异常，请检查 RESIDENTIAL_CREDENTIALS.homeStatic",
       );
     }
   } else if (homeProxy) {
     throw createUserError(
-      "未配置家庭静态 IP 时不应残留该节点，请检查节点清理逻辑",
+      "未配置静态IP 时不应残留该节点，请检查节点清理逻辑",
     );
   }
 
   if (routingTargets.hasTransit) {
-    if (!transitProxy || transitProxy.type !== "http") {
+    if (!transitProxy || transitProxy.type !== "socks5") {
       throw createUserError(
         "官方中转节点状态异常，请检查 RESIDENTIAL_CREDENTIALS 和节点注入逻辑",
       );
@@ -2304,14 +2186,14 @@ function assertResidentialGroupShape(config, routingTargets) {
   }
 }
 
-// 分类面板必须只挂对应统一出口，防止各自另选导致 IP 分裂。
+// 分类面板必须只挂对应总闸，防止各自另选导致 IP 分裂。
 function assertCategoryExitCoupling(config, exitGroupName, categoryNames, label) {
   var exitGroup = findProxyGroupByName(config["proxy-groups"], exitGroupName);
   if (!exitGroup || exitGroup.type !== "select") {
-    throw createUserError("缺少" + label + "统一出口组: " + exitGroupName);
+    throw createUserError("缺少" + label + "出口组: " + exitGroupName);
   }
   if (!exitGroup.proxies || exitGroup.proxies.length === 0) {
-    throw createUserError(label + "统一出口候选不能为空");
+    throw createUserError(label + "出口候选不能为空");
   }
 
   for (var i = 0; i < categoryNames.length; i++) {
@@ -2322,29 +2204,29 @@ function assertCategoryExitCoupling(config, exitGroupName, categoryNames, label)
       !haveSameStringSet(group.proxies || [], [exitGroupName])
     ) {
       throw createUserError(
-        label + "分类面板必须只挂统一出口: " + categoryNames[i],
+        label + "分类面板必须只挂出口总闸: " + categoryNames[i],
       );
     }
   }
 }
 
-// 严管三分类只挂严管统一出口。
+// 严管三分类只挂防封出口。
 function assertStrictExitCoupling(config) {
   assertCategoryExitCoupling(
     config,
     UI_GROUPS.strictExit,
     [UI_GROUPS.ai, UI_GROUPS.support, UI_GROUPS.integrations],
-    "严管",
+    "严管防封",
   );
 }
 
-// 其他调度统一出口与严管分离；四分类只挂其他统一出口。
+// 其他调度解锁出口与防封分离；四分类只挂解锁出口。
 function assertOtherExitCoupling(config) {
   assertCategoryExitCoupling(
     config,
     UI_GROUPS.otherExit,
     [UI_GROUPS.video, UI_GROUPS.music, UI_GROUPS.social, UI_GROUPS.im],
-    "其他调度",
+    "其他解锁",
   );
 }
 
@@ -2476,12 +2358,43 @@ function isValidProxyPort(port) {
   return typeof port === "number" && port > 0 && port < 65536;
 }
 
-// 校验出口端点：{ server, port, username, password }
-// requireAuth=true 时用户名密码必填（官方中转）；false 时认证可选（家庭 SOCKS）。
-// allowLocalhost=true 时允许 localhost（家庭网关）。
-function hasConfiguredEndpointCredentials(endpoint, options) {
-  var requireAuth = !!(options && options.requireAuth);
-  var allowLocalhost = !!(options && options.allowLocalhost);
+// 读取顶层共用认证（transit / homeStatic 共用）。
+function getSharedResidentialAuth(credentials) {
+  return {
+    username:
+      credentials && typeof credentials.username === "string"
+        ? credentials.username
+        : "",
+    password:
+      credentials && typeof credentials.password === "string"
+        ? credentials.password
+        : "",
+  };
+}
+
+// 校验共用用户名密码。requireAuth=true 时必填（官方中转）；false 时允许空（静态IP）。
+function hasValidSharedResidentialAuth(credentials, requireAuth) {
+  var auth = getSharedResidentialAuth(credentials);
+  if (requireAuth) {
+    if (auth.username === "" || auth.password === "") return false;
+  }
+  if (
+    auth.username !== "" &&
+    isResidentialCredentialPlaceholder("username", auth.username)
+  ) {
+    return false;
+  }
+  if (
+    auth.password !== "" &&
+    isResidentialCredentialPlaceholder("password", auth.password)
+  ) {
+    return false;
+  }
+  return true;
+}
+
+// 校验出口端点仅含 server/port。allowLocalhost=true 时允许 localhost。
+function hasConfiguredEndpointServer(endpoint, allowLocalhost) {
   if (
     !endpoint ||
     typeof endpoint.server !== "string" ||
@@ -2496,47 +2409,28 @@ function hasConfiguredEndpointCredentials(endpoint, options) {
   ) {
     return false;
   }
-
-  var username = typeof endpoint.username === "string" ? endpoint.username : "";
-  var password = typeof endpoint.password === "string" ? endpoint.password : "";
-  if (requireAuth) {
-    if (username === "" || password === "") return false;
-    if (isResidentialCredentialPlaceholder("username", username)) return false;
-    if (isResidentialCredentialPlaceholder("password", password)) return false;
-    return true;
-  }
-  if (username !== "" && isResidentialCredentialPlaceholder("username", username)) {
-    return false;
-  }
-  if (password !== "" && isResidentialCredentialPlaceholder("password", password)) {
-    return false;
-  }
   return true;
 }
 
-// 官方中转 HTTP：transit 内 server/port/username/password。
+// 官方中转 SOCKS5：transit.server/port + 顶层共用 username/password（必填）。
 function hasConfiguredTransitCredentials(credentials) {
   return (
     !!credentials &&
-    hasConfiguredEndpointCredentials(credentials.transit, {
-      requireAuth: true,
-      allowLocalhost: false,
-    })
+    hasConfiguredEndpointServer(credentials.transit, false) &&
+    hasValidSharedResidentialAuth(credentials, true)
   );
 }
 
-// 家庭静态 IP SOCKS5：homeStatic 内同名字段；认证可选；允许 localhost。
+// 静态IP SOCKS5：homeStatic.server/port；共用认证可选；允许 localhost。
 function hasConfiguredHomeStaticCredentials(credentials) {
   return (
     !!credentials &&
-    hasConfiguredEndpointCredentials(credentials.homeStatic, {
-      requireAuth: false,
-      allowLocalhost: true,
-    })
+    hasConfiguredEndpointServer(credentials.homeStatic, true) &&
+    hasValidSharedResidentialAuth(credentials, false)
   );
 }
 
-// 任一出口配置齐全即视为已配置家宽（兼容旧测试名）。
+// 任一出口配置齐全即视为已配置家宽。
 function hasConfiguredResidentialCredentials(credentials) {
   return (
     hasConfiguredTransitCredentials(credentials) ||
@@ -2544,12 +2438,14 @@ function hasConfiguredResidentialCredentials(credentials) {
   );
 }
 
-function cloneEndpointCredentials(endpoint) {
+// 合并端点 server/port 与顶层共用认证，供节点注入使用。
+function cloneEndpointCredentials(endpoint, sharedAuth) {
+  var auth = sharedAuth || { username: "", password: "" };
   return {
     server: endpoint.server,
     port: endpoint.port,
-    username: typeof endpoint.username === "string" ? endpoint.username : "",
-    password: typeof endpoint.password === "string" ? endpoint.password : "",
+    username: auth.username,
+    password: auth.password,
   };
 }
 
@@ -2591,14 +2487,15 @@ function shouldApplyOnlyDnsAndSniffer() {
   );
 }
 
-// 解析可选家宽出口：官方中转与/或家庭静态 IP；都没有则空对象（降级）。
+// 解析可选家宽出口：官方中转与/或静态IP；都没有则空对象（降级）。
 function resolveResidentialExits(credentials) {
+  var sharedAuth = getSharedResidentialAuth(credentials);
   return {
     transit: hasConfiguredTransitCredentials(credentials)
-      ? cloneEndpointCredentials(credentials.transit)
+      ? cloneEndpointCredentials(credentials.transit, sharedAuth)
       : null,
     homeStatic: hasConfiguredHomeStaticCredentials(credentials)
-      ? cloneEndpointCredentials(credentials.homeStatic)
+      ? cloneEndpointCredentials(credentials.homeStatic, sharedAuth)
       : null,
   };
 }
